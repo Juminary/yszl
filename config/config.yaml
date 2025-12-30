@@ -1,0 +1,122 @@
+# 服务器配置
+server:
+  host: "0.0.0.0"
+  port: 6007
+  debug: false
+
+# 客户端配置
+client:
+  server_url: "http://localhost:6007"
+
+# 语音识别配置 (Paraformer-Large)
+asr:
+  model: "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
+  provider: "funasr"
+  device: "cuda"  # 使用GPU加速
+  language: "zh"
+  # 医疗热词 - 扩充版
+  hotwords: >
+    阿莫西林 布洛芬 头孢 感冒 发烧 血压 血糖 
+    高血压 糖尿病 心脏病 胃痛 头痛 咳嗽 
+    过敏 消炎药 降压药 胰岛素 奥美拉唑 氨氯地平 
+    二甲双胍 阿司匹林 内科 外科 儿科 妇科 
+    骨科 眼科 耳鼻喉科 皮肤科 急诊科 
+    发热 腹痛 胸痛 呼吸困难 恶心 呕吐 腹泻
+    肺炎 胃炎 冠心病 高血脂 关节炎
+
+# 情感识别配置 (SenseVoice)
+emotion:
+  model: "iic/SenseVoiceSmall"
+  provider: "funasr"
+  device: "cuda"  # 使用GPU加速
+  classes: ["neutral", "happy", "sad", "angry", "fear", "surprise"]
+
+# 声纹识别配置 (Cam++)
+speaker:
+  model: "iic/speech_campplus_sv_zh-cn_16k-common"
+  provider: "modelscope"
+  threshold: 0.5  # 降低阈值以提高识别率
+  device: "cuda"  # 使用GPU加速
+  db_path: "data/speaker_db.pkl"
+
+# 对话系统配置 (Qwen2.5-0.5B-Instruct)
+dialogue:
+  model: "/Users/jrz/Documents/语音大作业/voice_assistant/server/models/models--Qwen--Qwen2.5-0.5B-Instruct/snapshots/7ae557604adf67be50417f59c2c2f167def9a775"
+  max_length: 512
+  temperature: 0.7
+  top_p: 0.9
+  device: "cuda"  # 使用GPU加速
+  history_length: 10
+  system_prompt: |
+    你是一个专业的医疗语音助手。你需要根据用户的角色（患者或医生）提供不同的服务：
+    
+    对于患者：
+    - 耐心倾听症状描述
+    - 提供初步的导诊建议
+    - 解释医学术语，使用通俗易懂的语言
+    - 给予情感关怀和安慰
+    - 提醒严重症状需要立即就医
+    
+    对于医生：
+    - 提供专业的辅助诊断建议
+    - 给出可能的疾病列表和鉴别要点
+    - 提供详细的用药信息
+    - 使用专业医学术语
+    - 提示需要的检查项目
+    
+    重要规则：
+    一，只用纯中文回答，禁止英文、数字、字母。
+    二，只用中文逗号和句号，禁止其他标点如冒号、问号、感叹号、括号、引号。
+    三，禁止使用星号、井号、横线等任何符号。
+    四，禁止使用列表、编号、分点格式，必须写成连贯的一段话。
+    五，态度温和友好，专业但不生硬。
+    六，对于医疗建议，务必提醒这只是初步参考，建议咨询专业医生。
+
+# 语音合成配置 (CosyVoice)
+tts:
+  model: "iic/CosyVoice-300M-Instruct"
+  provider: "modelscope"
+  device: "cuda"  # 使用GPU加速
+  sample_rate: 22050
+  fast_mode: true # 启用快速模式（使用macOS say，即时响应）
+
+# 音频处理配置
+audio:
+  sample_rate: 16000
+  channels: 1
+  chunk_size: 1024
+  format: "wav"
+  
+# 唤醒词配置
+wakeword:
+  enabled: true
+  keyword: "你好"
+  threshold: 0.8
+
+# 日志配置
+logging:
+  level: "INFO"
+  file: "logs/voice_assistant.log"
+
+# 数据存储路径
+paths:
+  models: "models"
+  data: "data"
+  logs: "logs"
+  temp: "temp"
+# RAG 检索增强配置
+rag:
+  enabled: true
+  embedding_model: "BAAI/bge-small-zh-v1.5"
+  knowledge_base: "config/knowledge_base.json"
+  index_path: "../data/rag_index"
+  top_k: 3
+  device: "cpu"
+
+# 知识图谱配置 (Neo4j)
+knowledge_graph:
+  enabled: true
+  host: "localhost"
+  port: 7474
+  user: "neo4j"
+  password: "12345"

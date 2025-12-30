@@ -1,0 +1,44 @@
+# 语音助手系统依赖
+
+# 核心框架
+flask>=2.0.0
+flask-cors>=3.0.0
+pyyaml>=6.0
+
+# PyTorch (CPU版本，如需GPU请安装对应版本)
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# 音频处理
+librosa>=0.10.0
+soundfile>=0.12.0
+numpy>=1.21.0
+scipy>=1.7.0
+
+# ===== 新模型依赖 =====
+
+# FunASR (Paraformer-Large + SenseVoice)
+funasr>=1.0.0
+
+# ModelScope (CosyVoice + Cam++)
+modelscope>=1.9.0
+
+# Transformers (Qwen2.5)
+transformers>=4.35.0
+accelerate>=0.24.0
+
+# ===== 可选依赖 =====
+
+# 后备TTS引擎
+pyttsx3>=2.90
+
+# 音频采集 (客户端需要)
+pyaudio>=0.2.11
+
+# 其他工具
+tqdm>=4.65.0
+requests>=2.28.0
+
+# RAG 相关
+faiss-cpu>=1.7.4
+sentence-transformers>=2.2.0

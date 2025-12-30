@@ -1,0 +1,1 @@
+{"default": {"features": {"id": {"_type": "Value"}, "answer": {"_type": "Value"}, "score": {"_type": "Value"}, "label": {"_type": "Value"}, "question": {"_type": "Value"}, "related_diseases": {"_type": "Value"}}, "splits": {"train": {"name": "train", "dataset_name": "Huatuo26M-Lite"}}}}

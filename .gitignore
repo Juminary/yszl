@@ -1,0 +1,84 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+venv312/
+.venv/
+
+# Models and Large weights
+models/
+server/models/
+server/CosyVoice/
+Huatuo26M-Lite/*.jsonl
+*.pth
+*.pt
+*.bin
+*.ckpt
+*.onnx
+*.engine
+
+# Data
+data/
+server/data/
+*.pkl
+*.db
+*.csv
+*.jsonl
+
+# Logs
+logs/
+server/logs/
+*.log
+
+# Temporary files
+temp/
+server/temp/
+*.wav
+*.mp3
+*.mp4
+test_*.wav
+temp_*.wav
+chat_response.wav
+cosyvoice_test.wav
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Cache
+.cache/
+*.cache
