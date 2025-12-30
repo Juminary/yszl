@@ -56,7 +56,17 @@ source venv/bin/activate  # Linux/macOS
 pip install -r requirements.txt
 ```
 
-### 2. 启动服务器
+### 2. 下载模型
+
+本项目使用多个深度学习模型，需要先运行下载脚本：
+
+```bash
+python server/download_models.py
+```
+
+按提示选择 `s` (下载缺失模型) 或 `a` (下载所有模型)。
+
+### 3. 启动服务器
 
 ```bash
 # 方式一：使用启动脚本
