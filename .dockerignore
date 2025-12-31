@@ -1,0 +1,47 @@
+# 虚拟环境
+venv*/
+.venv/
+ENV/
+
+# 模型文件（通过 volume 挂载，不放入镜像）
+server/models/
+server/data/rag_index/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 日志和临时文件
+*.log
+server/logs/
+server/temp/
+temp/
+logs/
+
+# 测试
+tests/
+*.test.py
+
+# 文档（保留 README）
+docs/
+
+# 其他
+.DS_Store
+Thumbs.db
+*.egg-info/
+dist/
+build/
+.devcontainer/
+requirements_full.txt

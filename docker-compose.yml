@@ -1,0 +1,32 @@
+services:
+  server:
+    build: .
+    container_name: voice_assistant
+    ports:
+      - "6007:6007"
+    volumes:
+      # 挂载代码（从 GitHub clone 下来的）
+      - ./server:/app/server
+      - ./client:/app/client
+      - ./config:/app/config
+      # 挂载模型和数据（持久化）
+      - ./server/models:/app/server/models
+      - ./server/data:/app/server/data
+    environment:
+      - HF_ENDPOINT=https://hf-mirror.com
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: voice_neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/neo4j12345
+    volumes:
+      - neo4j_data:/data
+    restart: unless-stopped
+
+volumes:
+  neo4j_data:
