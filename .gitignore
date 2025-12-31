@@ -30,6 +30,7 @@ venv312/
 # Models and Large weights
 models/
 server/models/
+server/CosyVoice/
 Huatuo26M-Lite/*.jsonl
 *.pth
 *.pt
