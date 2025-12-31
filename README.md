@@ -36,58 +36,247 @@ voice_assistant/
 └── temp/                   # 临时文件目录
 ```
 
-## 🚀 快速开始
+## 🚀 部署指南
 
 ### 环境要求
 
-- Python 3.10+
-- macOS / Linux / Windows
-- 推荐 8GB+ 内存
+| 项目 | 要求 |
+|------|------|
+| **Python** | 3.10 - 3.12（推荐 3.12） |
+| **操作系统** | macOS / Linux / Windows |
+| **内存** | 最低 8GB，推荐 16GB+ |
+| **磁盘空间** | 约 5GB（模型和索引文件） |
+| **网络** | 首次运行需要下载模型（约 3GB） |
 
-### 1. 安装依赖
+---
+
+### 步骤 1：克隆项目
 
 ```bash
-# 创建虚拟环境
-python3 -m venv venv
-source venv/bin/activate  # Linux/macOS
-# venv\Scripts\activate   # Windows
+git clone <项目地址>
+cd voice_assistant
+```
 
-# 安装依赖
+---
+
+### 步骤 2：创建 Python 虚拟环境
+
+**macOS / Linux：**
+```bash
+# 使用 Python 3.12 创建虚拟环境
+python3.12 -m venv venv312
+
+# 激活虚拟环境
+source venv312/bin/activate
+
+# 确认 Python 版本
+python --version  # 应显示 Python 3.12.x
+```
+
+**Windows：**
+```powershell
+# 创建虚拟环境
+python -m venv venv312
+
+# 激活虚拟环境
+venv312\Scripts\activate
+
+# 确认 Python 版本
+python --version
+```
+
+---
+
+### 步骤 3：安装依赖
+
+```bash
+# 升级 pip
+pip install --upgrade pip
+
+# 安装项目依赖
 pip install -r requirements.txt
 ```
 
-### 2. 下载模型
+**⚠️ 常见问题：**
 
-本项目使用多个深度学习模型，需要先运行下载脚本：
+1. **PyAudio 安装失败（macOS）**：
+   ```bash
+   brew install portaudio
+   pip install pyaudio
+   ```
+
+2. **PyAudio 安装失败（Ubuntu/Debian）**：
+   ```bash
+   sudo apt-get install python3-pyaudio portaudio19-dev
+   pip install pyaudio
+   ```
+
+3. **网络问题导致下载慢**：使用国内镜像源
+   ```bash
+   pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+   ```
+
+---
+
+### 步骤 4：下载模型
+
+模型会在首次运行时自动下载，也可以预先下载：
 
 ```bash
-python server/download_models.py
+cd server
+python download_models.py
 ```
 
-按提示选择 `s` (下载缺失模型) 或 `a` (下载所有模型)。
+按提示选择：
+- `s` - 仅下载缺失的模型
+- `a` - 下载所有模型
 
-### 3. 启动服务器
+**模型列表：**
+
+| 模型 | 大小 | 来源 | 用途 |
+|------|------|------|------|
+| Paraformer-Large | ~1GB | ModelScope | 语音识别 (ASR) |
+| SenseVoice | ~200MB | ModelScope | 情感识别 |
+| CAM++ | ~100MB | ModelScope | 声纹识别 |
+| Qwen2.5-0.5B | ~1GB | HuggingFace | 对话生成 (LLM) |
+| bge-small-zh | ~100MB | HuggingFace | RAG 文本向量化 |
+
+**⚠️ 如果 HuggingFace 下载慢**：设置镜像
+```bash
+export HF_ENDPOINT=https://hf-mirror.com
+```
+
+---
+
+### 步骤 5：构建 RAG 索引（可选）
+
+如果项目中未包含 RAG 索引文件，需要手动构建：
 
 ```bash
-# 方式一：使用启动脚本
+cd server
+python build_rag_index.py
+```
+
+索引构建完成后会在 `server/data/rag_index/` 目录下生成：
+- `index.faiss` - FAISS 向量索引
+- `documents.json` - 文档内容
+
+---
+
+### 步骤 6：配置知识图谱（可选）
+
+知识图谱功能需要 Neo4j 数据库支持：
+
+**安装 Neo4j：**
+
+```bash
+# macOS (Homebrew)
+brew install neo4j
+
+# Ubuntu/Debian
+sudo apt-get install neo4j
+
+# 或下载 Neo4j Desktop
+# https://neo4j.com/download/
+```
+
+**启动 Neo4j：**
+```bash
+neo4j start
+```
+
+**配置连接信息**（编辑 `config/config.yaml`）：
+```yaml
+knowledge_graph:
+  enabled: true
+  host: "localhost"
+  port: 7474
+  user: "neo4j"
+  password: "your_password"  # 修改为你的密码
+```
+
+**导入医学知识图谱数据：**
+```bash
+python build_medicalgraph.py
+```
+
+---
+
+### 步骤 7：启动服务
+
+**方式一：使用启动脚本（推荐）**
+
+```bash
+# 终端1：启动服务器
 ./start_server.sh
 
-# 方式二：手动启动
-source venv/bin/activate
-cd server && python app.py
+# 终端2：启动客户端
+./start_client.sh
 ```
 
-服务器默认运行在 `http://localhost:5001`
-
-### 3. 启动客户端
+**方式二：手动启动**
 
 ```bash
-# 方式一：使用启动脚本
-./start_client.sh
+# 终端1：启动服务器
+source venv312/bin/activate
+cd server
+python app.py
 
-# 方式二：手动启动
-source venv/bin/activate
-cd client && python main.py
+# 终端2：启动客户端
+source venv312/bin/activate
+cd client
+python main.py
+```
+
+**✅ 启动成功标志：**
+```
+📚 [RAG] 成功加载索引
+   - 文档数量: 177703
+   - 向量数量: 177703
+
+🔗 [知识图谱] 连接成功
+   - 地址: bolt://localhost:7687
+   - 词典: 44093 词条
+
+ * Running on http://127.0.0.1:6007
+```
+
+---
+
+### 步骤 8：使用客户端
+
+客户端启动后，可使用以下命令：
+
+| 命令 | 功能 | 示例 |
+|------|------|------|
+| `talk` | 开始语音对话 | 输入后对着麦克风说话 |
+| `register <ID>` | 注册声纹 | `register 张三` |
+| `list` | 列出已注册声纹 | - |
+| `history` | 查看对话历史 | - |
+| `clear` | 清除对话历史 | - |
+| `help` | 显示帮助信息 | - |
+| `quit` | 退出客户端 | - |
+
+---
+
+### 目录结构说明
+
+```
+voice_assistant/
+├── server/                    # 服务端代码
+│   ├── app.py                # Flask 主应用
+│   ├── modules/              # 功能模块
+│   ├── models/               # 下载的模型文件
+│   ├── data/                 # 数据文件
+│   │   ├── rag_index/       # RAG 向量索引
+│   │   ├── dict/            # 医学词典
+│   │   └── speaker_db.pkl   # 声纹数据库
+│   └── logs/                 # 日志文件
+├── client/                    # 客户端代码
+├── config/
+│   └── config.yaml           # 配置文件
+├── requirements.txt           # Python 依赖
+└── README.md
 ```
 
 ## 📡 API 接口
