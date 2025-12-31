@@ -51,8 +51,11 @@ class TTSModule:
         self.model = None
         self.sample_rate = 22050
         
-        # CosyVoice 模型路径
+        # CosyVoice 模型路径（兼容带 iic 子目录的结构）
         model_dir = os.path.join(COSYVOICE_PATH, 'pretrained_models', 'CosyVoice-300M-Instruct')
+        alt_model_dir = os.path.join(COSYVOICE_PATH, 'pretrained_models', 'iic', 'CosyVoice-300M-Instruct')
+        if not os.path.exists(model_dir) and os.path.exists(alt_model_dir):
+            model_dir = alt_model_dir
         
         if COSYVOICE_AVAILABLE and os.path.exists(model_dir):
             logger.info(f"Loading CosyVoice from {model_dir}")

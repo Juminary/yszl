@@ -176,38 +176,41 @@ def initialize_modules():
             logger.info(f"RAG module initialized with {rag_module.get_info().get('document_count', 0)} documents")
             
             # 初始化知识图谱模块并与 RAG 集成
-            try:
-                from modules.knowledge_graph import KnowledgeGraphModule
-                kg_config = config.get('knowledge_graph', {})
-                
-                print("\n" + "-"*50, flush=True)
-                print("🔗 [知识图谱] 正在初始化...", flush=True)
-                print(f"   Neo4j: {kg_config.get('host', 'localhost')}:{kg_config.get('port', 7474)}", flush=True)
-                
-                kg_module = KnowledgeGraphModule(
-                    host=kg_config.get('host', 'localhost'),
-                    port=kg_config.get('port', 7474),
-                    user=kg_config.get('user', 'neo4j'),
-                    password=kg_config.get('password', '12345')
-                )
-                
-                if kg_module.enabled:
-                    rag_module.knowledge_graph = kg_module
-                    modules['knowledge_graph'] = kg_module
-                    # 显示 NLU 模块状态
-                    nlu_info = kg_module.get_info().get('nlu_modules', {})
-                    print(f"   NLU模块: 词典={nlu_info.get('medical_dict')}, 意图={nlu_info.get('intent_classifier')}, Cypher={nlu_info.get('cypher_generator')}", flush=True)
+            kg_config = config.get('knowledge_graph', {})
+            if kg_config.get('enabled', False):
+                try:
+                    from modules.knowledge_graph import KnowledgeGraphModule
+                    
+                    print("\n" + "-"*50, flush=True)
+                    print("🔗 [知识图谱] 正在初始化...", flush=True)
+                    print(f"   Neo4j: {kg_config.get('host', 'localhost')}:{kg_config.get('port', 7474)}", flush=True)
+                    
+                    kg_module = KnowledgeGraphModule(
+                        host=kg_config.get('host', 'localhost'),
+                        port=kg_config.get('port', 7474),
+                        user=kg_config.get('user', 'neo4j'),
+                        password=kg_config.get('password', '12345')
+                    )
+                    
+                    if kg_module.enabled:
+                        rag_module.knowledge_graph = kg_module
+                        modules['knowledge_graph'] = kg_module
+                        # 显示 NLU 模块状态
+                        nlu_info = kg_module.get_info().get('nlu_modules', {})
+                        print(f"   NLU模块: 词典={nlu_info.get('medical_dict')}, 意图={nlu_info.get('intent_classifier')}, Cypher={nlu_info.get('cypher_generator')}", flush=True)
+                        print("-"*50 + "\n", flush=True)
+                        logger.info("Knowledge Graph integrated with RAG")
+                    else:
+                        print("   ✗ Neo4j 连接失败，知识图谱功能禁用", flush=True)
+                        print("   （RAG 向量检索仍然可用）", flush=True)
+                        print("-"*50 + "\n", flush=True)
+                        logger.warning("Knowledge Graph not available, RAG will work without it")
+                except Exception as kg_e:
+                    print(f"   ✗ 知识图谱初始化异常: {kg_e}", flush=True)
                     print("-"*50 + "\n", flush=True)
-                    logger.info("Knowledge Graph integrated with RAG")
-                else:
-                    print("   ✗ Neo4j 连接失败，知识图谱功能禁用", flush=True)
-                    print("   （RAG 向量检索仍然可用）", flush=True)
-                    print("-"*50 + "\n", flush=True)
-                    logger.warning("Knowledge Graph not available, RAG will work without it")
-            except Exception as kg_e:
-                print(f"   ✗ 知识图谱初始化异常: {kg_e}", flush=True)
-                print("-"*50 + "\n", flush=True)
-                logger.warning(f"Knowledge Graph initialization failed: {kg_e}")
+                    logger.warning(f"Knowledge Graph initialization failed: {kg_e}")
+            else:
+                logger.info("Knowledge Graph disabled in config")
                 
         except Exception as e:
             logger.warning(f"Failed to initialize RAG, trying SimpleRAG: {e}")

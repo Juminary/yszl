@@ -32,7 +32,8 @@ speaker:
 
 # 对话系统配置 (Qwen2.5-0.5B-Instruct)
 dialogue:
-  model: "/Users/jrz/Documents/语音大作业/voice_assistant/server/models/models--Qwen--Qwen2.5-0.5B-Instruct/snapshots/7ae557604adf67be50417f59c2c2f167def9a775"
+  # 使用项目内下载的相对路径，避免绝对路径报错
+  model: "Qwen/Qwen2.5-0.5B-Instruct"
   max_length: 512
   temperature: 0.7
   top_p: 0.9
@@ -107,7 +108,7 @@ rag:
 
 # 知识图谱配置 (Neo4j)
 knowledge_graph:
-  enabled: true
+  enabled: false
   host: "localhost"
   port: 7474
   user: "neo4j"

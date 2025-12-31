@@ -56,19 +56,23 @@ class DialogueModule:
         
         logger.info(f"Loading dialogue model: {model_name} on {self.device}")
         try:
-            # 处理本地路径：如果是相对路径，转换为绝对路径
+            # 处理本地路径：只有明确指定相对/绝对路径时才当作本地文件
             import os
-            if model_name.startswith('./') or model_name.startswith('/') or os.path.exists(model_name):
+            # 判断是否为本地路径：以 ./ 或 / 开头，或者包含 models/ 前缀
+            if model_name.startswith('./') or model_name.startswith('/') or model_name.startswith('models/'):
                 model_path = os.path.abspath(model_name)
                 logger.info(f"Using local model path: {model_path}")
+                use_local = True
             else:
+                # 当作 HuggingFace repo ID，让 transformers 自动处理
                 model_path = model_name
+                use_local = False
             
             # 加载tokenizer
             self.tokenizer = AutoTokenizer.from_pretrained(
                 model_path, 
                 trust_remote_code=True,
-                local_files_only=os.path.exists(model_path)
+                local_files_only=use_local
             )
             
             # 加载模型
@@ -77,7 +81,7 @@ class DialogueModule:
                 trust_remote_code=True,
                 torch_dtype=torch.float16 if self.device != "cpu" else torch.float32,
                 device_map="auto" if self.device == "cuda" else None,
-                local_files_only=os.path.exists(model_path)
+                local_files_only=use_local
             )
             
             if self.device == "mps":
