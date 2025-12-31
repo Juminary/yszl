@@ -8,6 +8,10 @@ from .speaker import SpeakerModule
 from .dialogue import DialogueModule, SimplDialogueModule
 from .tts import TTSModule, SimpleTTSModule
 from .rag import RAGModule, SimpleRAGModule
+from .knowledge_graph import KnowledgeGraphModule
+from .medical_dict import MedicalDictionary
+from .intent_classifier import IntentClassifier
+from .cypher_generator import CypherGenerator
 
 __all__ = [
     'ASRModule',
@@ -18,5 +22,9 @@ __all__ = [
     'TTSModule',
     'SimpleTTSModule',
     'RAGModule',
-    'SimpleRAGModule'
+    'SimpleRAGModule',
+    'KnowledgeGraphModule',
+    'MedicalDictionary',
+    'IntentClassifier',
+    'CypherGenerator'
 ]

@@ -31,7 +31,8 @@ class RAGModule:
                  index_path: str = "data/rag_index",
                  knowledge_base_path: str = "data/knowledge_base.json",
                  device: str = "cpu",
-                 top_k: int = 3):
+                 top_k: int = 3,
+                 min_score: float = 0.5):
         """
         初始化 RAG 模块
         
@@ -41,8 +42,10 @@ class RAGModule:
             knowledge_base_path: 知识库 JSON 文件路径
             device: 运行设备
             top_k: 默认检索数量
+            min_score: 相似度阈值，低于此值的结果将被过滤
         """
         self.top_k = top_k
+        self.min_score = min_score
         self.index_path = Path(index_path)
         self.knowledge_base_path = Path(knowledge_base_path)
         self.documents = []  # 存储原始文档
@@ -206,22 +209,39 @@ class RAGModule:
         # 打印检索信息到终端 (RAG 调试信息)
         print("\n" + "="*50)
         print(f"🔍 [RAG 检索] 查询: {query}")
+        print(f"   相似度阈值: {self.min_score}")
         print("-" * 50)
         
-        # 返回结果
+        # 返回结果（应用相似度阈值过滤）
         results = []
+        filtered_count = 0
         for i, (score, idx) in enumerate(zip(scores[0], indices[0])):
             if idx < len(self.documents):
+                # 检查是否满足相似度阈值
+                if score < self.min_score:
+                    filtered_count += 1
+                    if i < 3:
+                        content_preview = self.documents[idx]['content'].replace('\n', ' ')[:60]
+                        label = self.documents[idx].get('metadata', {}).get('label', '未知')
+                        print(f"  [✗] (相似度: {score:.3f} < {self.min_score}) [{label}]")
+                        print(f"      {content_preview}... (已过滤)")
+                    continue
+                
                 doc = self.documents[idx].copy()
                 doc['score'] = float(score)
                 results.append(doc)
                 
-                # 打印前3条检索结果
-                if i < 3:
+                # 打印前3条有效检索结果
+                if len(results) <= 3:
                     content_preview = doc['content'].replace('\n', ' ')[:100]
                     label = doc.get('metadata', {}).get('label', '未知')
-                    print(f"  [{i+1}] (相似度: {score:.3f}) [{label}]")
+                    print(f"  [✓] (相似度: {score:.3f}) [{label}]")
                     print(f"      {content_preview}...")
+        
+        if filtered_count > 0:
+            print(f"\n   ⚠ 已过滤 {filtered_count} 条低相似度结果")
+        if not results:
+            print("   📭 无有效检索结果（所有结果相似度低于阈值）")
         
         print("="*50 + "\n")
         

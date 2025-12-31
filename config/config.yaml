@@ -108,9 +108,9 @@ paths:
 rag:
   enabled: true
   embedding_model: "BAAI/bge-small-zh-v1.5"
-  knowledge_base: "config/knowledge_base.json"
-  index_path: "../data/rag_index"
+  index_path: "data/rag_index"
   top_k: 3
+  min_score: 0.6  # 相似度阈值，低于此值的结果将被过滤
   device: "cpu"
 
 # 知识图谱配置 (Neo4j)
