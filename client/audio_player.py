@@ -175,10 +175,155 @@ class AudioPlayer:
             logger.error(f"Failed to play array: {e}")
             raise
     
+    def create_streaming_player(self, sample_rate: int = 22050, channels: int = 1):
+        """
+        创建流式播放器
+        
+        Args:
+            sample_rate: 采样率
+            channels: 声道数
+            
+        Returns:
+            StreamingAudioPlayer 实例
+        """
+        return StreamingAudioPlayer(self.audio, sample_rate, channels)
+    
     def __del__(self):
         """清理资源"""
         if hasattr(self, 'audio'):
             self.audio.terminate()
+
+
+class StreamingAudioPlayer:
+    """
+    流式音频播放器
+    使用后台线程和队列实现边接收边播放
+    """
+    
+    def __init__(self, audio: pyaudio.PyAudio, sample_rate: int = 22050, channels: int = 1):
+        """
+        初始化流式播放器
+        
+        Args:
+            audio: PyAudio 实例
+            sample_rate: 采样率
+            channels: 声道数
+        """
+        import threading
+        import queue
+        
+        self.audio = audio
+        self.sample_rate = sample_rate
+        self.channels = channels
+        self.queue = queue.Queue()
+        self.stream = None
+        self.playing = False
+        self.thread = None
+        self._stop_event = threading.Event()
+        self._started = False
+        
+        logger.info(f"[StreamingPlayer] Initialized: {sample_rate}Hz, {channels}ch")
+    
+    def start(self):
+        """开始播放（创建后台播放线程）"""
+        import threading
+        
+        if self._started:
+            return
+        
+        self._started = True
+        self._stop_event.clear()
+        
+        # 创建音频流
+        self.stream = self.audio.open(
+            format=pyaudio.paInt16,
+            channels=self.channels,
+            rate=self.sample_rate,
+            output=True,
+            frames_per_buffer=4096
+        )
+        
+        # 启动播放线程
+        self.thread = threading.Thread(target=self._playback_loop, daemon=True)
+        self.playing = True
+        self.thread.start()
+        
+        logger.info("[StreamingPlayer] Started")
+    
+    def _playback_loop(self):
+        """后台播放循环"""
+        while self.playing and not self._stop_event.is_set():
+            try:
+                # 从队列获取数据块（带超时）
+                chunk = self.queue.get(timeout=0.1)
+                
+                if chunk is None:  # 结束信号
+                    break
+                
+                # 播放数据块
+                self.stream.write(chunk)
+                
+            except Exception:
+                # 队列超时，继续等待
+                continue
+        
+        logger.info("[StreamingPlayer] Playback loop ended")
+    
+    def feed(self, audio_bytes: bytes):
+        """
+        向播放器提供音频数据
+        
+        Args:
+            audio_bytes: PCM 音频数据（16-bit）
+        """
+        if not self._started:
+            self.start()
+        
+        self.queue.put(audio_bytes)
+    
+    def stop(self):
+        """停止播放"""
+        self.playing = False
+        self._stop_event.set()
+        
+        # 发送结束信号
+        self.queue.put(None)
+        
+        # 等待线程结束
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=2.0)
+        
+        # 关闭音频流
+        if self.stream:
+            try:
+                self.stream.stop_stream()
+                self.stream.close()
+            except Exception:
+                pass
+            self.stream = None
+        
+        logger.info("[StreamingPlayer] Stopped")
+    
+    def wait_until_done(self):
+        """等待所有音频播放完成"""
+        # 发送结束信号
+        self.queue.put(None)
+        
+        # 等待队列清空
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=60.0)
+        
+        # 关闭音频流
+        if self.stream:
+            try:
+                self.stream.stop_stream()
+                self.stream.close()
+            except Exception:
+                pass
+            self.stream = None
+        
+        self.playing = False
+        logger.info("[StreamingPlayer] Playback completed")
 
 
 if __name__ == "__main__":

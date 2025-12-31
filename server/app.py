@@ -110,14 +110,14 @@ def initialize_modules():
     logger.info("Initializing modules...")
     
     try:
-        # 初始化ASR模块 (Paraformer-Large)
+        # 初始化ASR模块 (SenseVoice - 多语言/方言)
         asr_config = config.get('asr', {})
         modules['asr'] = ASRModule(
-            model_name=asr_config.get('model', 'paraformer-large'),
+            model_name=asr_config.get('model', 'sensevoice'),
             device=asr_config.get('device', 'cpu'),
-            language=asr_config.get('language', 'zh')
+            language=asr_config.get('language', 'auto')
         )
-        logger.info("ASR module initialized (Paraformer-Large)")
+        logger.info("ASR module initialized (SenseVoice)")
         
     except Exception as e:
         logger.error(f"Failed to initialize ASR: {e}")
@@ -509,6 +509,58 @@ def tts_endpoint():
         
     except Exception as e:
         logger.error(f"TTS endpoint error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/tts/stream', methods=['POST'])
+def tts_stream_endpoint():
+    """
+    流式语音合成接口
+    边生成边返回音频数据，降低首音频延迟
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'text' not in data:
+            return jsonify({"error": "text is required"}), 400
+        
+        text = data['text']
+        speaker = data.get('speaker')
+        speed = data.get('speed', 1.0)
+        
+        # 检查 TTS 模块是否支持流式
+        tts_module = modules.get('tts')
+        if tts_module is None:
+            return jsonify({"error": "TTS module not available"}), 500
+        
+        if not hasattr(tts_module, 'synthesize_stream'):
+            logger.warning("TTS module does not support streaming, falling back to regular synthesis")
+            # 回退到普通模式
+            result = tts_module.synthesize(text=text)
+            if result.get('output_path'):
+                return send_file(result['output_path'], mimetype='audio/wav')
+            else:
+                return jsonify({"error": "TTS synthesis failed"}), 500
+        
+        logger.info(f"[Streaming TTS] Request: {text[:50]}...")
+        
+        def generate():
+            """生成器函数，逐块返回音频数据"""
+            for chunk in tts_module.synthesize_stream(text, speaker, speed):
+                yield chunk
+        
+        from flask import Response
+        return Response(
+            generate(),
+            mimetype='audio/wav',
+            headers={
+                'Transfer-Encoding': 'chunked',
+                'X-Content-Type-Options': 'nosniff'
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"TTS stream endpoint error: {e}")
         return jsonify({"error": str(e)}), 500
 
 

@@ -62,23 +62,17 @@ class EmotionModule:
         self.num_classes = len(self.EMOTIONS)
         
         if not SENSEVOICE_AVAILABLE:
-            logger.warning("SenseVoice not available, using fallback mode")
-            self.model = None
-            return
+            raise ImportError("SenseVoice not available. Please install with: pip install funasr")
         
         logger.info("Loading SenseVoice model...")
-        try:
-            # 加载SenseVoice模型
-            self.model = AutoModel(
-                model="iic/SenseVoiceSmall",
-                trust_remote_code=True,
-                device=self.device,
-                disable_update=True  # 禁用更新检查，使用本地模型
-            )
-            logger.info("SenseVoice model loaded successfully")
-        except Exception as e:
-            logger.error(f"Failed to load SenseVoice model: {e}")
-            self.model = None
+        # 加载SenseVoice模型
+        self.model = AutoModel(
+            model="iic/SenseVoiceSmall",
+            trust_remote_code=True,
+            device=self.device,
+            disable_update=True  # 禁用更新检查，使用本地模型
+        )
+        logger.info("SenseVoice model loaded successfully")
     
     def predict(self, audio_path: str = None, audio_array: np.ndarray = None,
                 sample_rate: int = 16000) -> Dict:
@@ -94,10 +88,6 @@ class EmotionModule:
             情感预测结果
         """
         try:
-            if self.model is None:
-                # 使用声学特征后备方案
-                return self._predict_fallback(audio_path, audio_array, sample_rate)
-            
             # 准备输入
             if audio_array is not None:
                 # 保存临时文件（SenseVoice需要文件路径）
@@ -154,51 +144,7 @@ class EmotionModule:
         
         return "neutral"
     
-    def _predict_fallback(self, audio_path: str = None, audio_array: np.ndarray = None,
-                          sample_rate: int = 16000) -> Dict:
-        """后备方案：基于声学特征的简单情感判断"""
-        try:
-            if audio_array is not None:
-                y = audio_array
-                sr = sample_rate
-            elif audio_path is not None:
-                y, sr = librosa.load(audio_path, sr=sample_rate)
-            else:
-                return self._default_result()
-            
-            # 提取简单特征
-            rms = librosa.feature.rms(y=y)[0]
-            energy_mean = np.mean(rms)
-            energy_std = np.std(rms)
-            
-            zcr = librosa.feature.zero_crossing_rate(y)[0]
-            zcr_mean = np.mean(zcr)
-            
-            # 简单规则判断
-            if energy_mean > 0.1 and energy_std > 0.05:
-                emotion = "angry"
-            elif energy_mean < 0.02:
-                emotion = "sad"
-            elif zcr_mean > 0.15:
-                emotion = "happy"
-            else:
-                emotion = "neutral"
-            
-            emotion_idx = self.EMOTIONS.index(emotion)
-            prosody = self._extract_prosody(audio_path, audio_array, sample_rate)
-            
-            return {
-                "emotion": emotion,
-                "emotion_zh": self.EMOTIONS_ZH[emotion_idx],
-                "confidence": 0.6,
-                "probabilities": {e: 0.1 for e in self.EMOTIONS},
-                "prosody": prosody,
-                "method": "fallback"
-            }
-            
-        except Exception as e:
-            return self._default_result(error=str(e))
-    
+
     def _default_result(self, error: str = None) -> Dict:
         """返回默认结果"""
         result = {
@@ -262,7 +208,7 @@ class EmotionModule:
     def get_model_info(self) -> Dict:
         """获取模型信息"""
         return {
-            "model_type": "SenseVoice" if self.model else "Fallback (acoustic features)",
+            "model_type": "SenseVoice",
             "device": self.device,
             "emotions": self.EMOTIONS,
             "features": [

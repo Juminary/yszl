@@ -67,6 +67,9 @@ class VoiceAssistantClient:
         # 会话ID
         self.session_id = f"raspberrypi_{int(time.time())}"
         
+        # 流式 TTS 设置
+        self.use_streaming_tts = self.config.get('tts', {}).get('streaming', True)  # 默认启用流式
+        
         # 唤醒词设置
         self.wakeword_enabled = self.config.get('wakeword', {}).get('enabled', False)
         self.wakeword = self.config.get('wakeword', {}).get('keyword', '康康')
@@ -84,6 +87,7 @@ class VoiceAssistantClient:
         logger.info(f"Voice Assistant Client initialized")
         logger.info(f"Server: {self.server_url}")
         logger.info(f"Session ID: {self.session_id}")
+        logger.info(f"Streaming TTS: {'enabled' if self.use_streaming_tts else 'disabled'}")
     
     def _load_config(self, config_path: str) -> dict:
         """加载配置文件"""
@@ -93,6 +97,127 @@ class VoiceAssistantClient:
         except Exception as e:
             logger.warning(f"Failed to load config: {e}. Using defaults.")
             return {}
+    
+    def synthesize_and_play(self, text: str, use_streaming: bool = None):
+        """
+        合成并播放语音（自动选择流式或普通模式）
+        
+        Args:
+            text: 要合成的文本
+            use_streaming: 是否使用流式，None 则使用配置
+        """
+        if use_streaming is None:
+            use_streaming = self.use_streaming_tts
+        
+        if use_streaming:
+            return self._play_streaming_tts(text)
+        else:
+            return self._play_normal_tts(text)
+    
+    def _play_streaming_tts(self, text: str) -> bool:
+        """
+        流式 TTS：边下载边播放
+        使用 StreamingAudioPlayer 实现真正的实时播放
+        
+        Args:
+            text: 要合成的文本
+            
+        Returns:
+            是否成功
+        """
+        try:
+            logger.info(f"[Streaming TTS] Requesting: {text[:30]}...")
+            start_time = time.time()
+            
+            # 流式请求
+            response = requests.post(
+                f"{self.server_url}/tts/stream",
+                json={"text": text},
+                stream=True,  # 流式接收
+                timeout=120
+            )
+            
+            if response.status_code != 200:
+                logger.warning(f"Streaming TTS failed ({response.status_code}), falling back to normal TTS")
+                return self._play_normal_tts(text)
+            
+            # 创建流式播放器（使用 CosyVoice 的采样率）
+            sample_rate = self.config.get('tts', {}).get('sample_rate', 22050)
+            streaming_player = self.player.create_streaming_player(
+                sample_rate=sample_rate,
+                channels=1
+            )
+            
+            total_bytes = 0
+            first_chunk_time = None
+            header_skipped = False
+            
+            # 边下载边播放
+            for chunk in response.iter_content(chunk_size=4096):
+                if chunk:
+                    if first_chunk_time is None:
+                        first_chunk_time = time.time()
+                        latency = first_chunk_time - start_time
+                        logger.info(f"[Streaming TTS] First audio latency: {latency:.2f}s")
+                        print(f"🔊 首音频延迟: {latency:.2f}s")
+                    
+                    # 跳过 WAV 头部（44 字节）
+                    if not header_skipped and len(chunk) >= 44:
+                        # 检查是否是 WAV 头部
+                        if chunk[:4] == b'RIFF':
+                            chunk = chunk[44:]  # 跳过头部
+                            header_skipped = True
+                    
+                    if chunk:  # 确保还有数据
+                        streaming_player.feed(chunk)
+                        total_bytes += len(chunk)
+            
+            # 等待播放完成
+            streaming_player.wait_until_done()
+            
+            total_time = time.time() - start_time
+            logger.info(f"[Streaming TTS] Complete: {total_bytes} bytes in {total_time:.2f}s")
+            return True
+                
+        except Exception as e:
+            logger.error(f"[Streaming TTS] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            # 回退到普通模式
+            return self._play_normal_tts(text)
+    
+    def _play_normal_tts(self, text: str) -> bool:
+        """
+        普通 TTS：等待完整音频后播放
+        
+        Args:
+            text: 要合成的文本
+            
+        Returns:
+            是否成功
+        """
+        try:
+            response = requests.post(
+                f"{self.server_url}/tts",
+                json={"text": text},
+                timeout=120
+            )
+            
+            if response.status_code == 200:
+                temp_audio = "temp_tts_response.wav"
+                with open(temp_audio, 'wb') as f:
+                    f.write(response.content)
+                
+                self.player.play_file(temp_audio)
+                Path(temp_audio).unlink(missing_ok=True)
+                return True
+            else:
+                logger.error(f"TTS failed: {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"TTS error: {e}")
+            return False
     
     def check_server(self) -> bool:
         """检查服务器连接"""
@@ -481,20 +606,8 @@ class VoiceAssistantClient:
                 response_text = dialogue_result.get('response', '')
                 print(f"助手: {response_text}")
                 
-                # 语音合成并播放
-                tts_response = requests.post(
-                    f"{self.server_url}/tts",
-                    json={"text": response_text},
-                    timeout=60
-                )
-                
-                if tts_response.status_code == 200:
-                    response_audio = "temp_tts_response.wav"
-                    with open(response_audio, 'wb') as f:
-                        f.write(tts_response.content)
-                    
-                    self.player.play_file(response_audio)
-                    Path(response_audio).unlink(missing_ok=True)
+                # 语音合成并播放（自动使用流式或普通模式）
+                self.synthesize_and_play(response_text)
                 
             except KeyboardInterrupt:
                 print("\n退出文字对话模式")

@@ -214,9 +214,96 @@ class TTSModule:
                 "Instruction-aware synthesis",
                 "Emotion-aware speaking style",
                 "Zero-shot voice cloning",
-                "Natural prosody"
+                "Natural prosody",
+                "Streaming output"  # 新增
             ]
         }
+    
+    def synthesize_stream(self, text: str, speaker: str = None, speed: float = 1.0):
+        """
+        流式语音合成 - 边生成边返回音频块
+        
+        Args:
+            text: 要合成的文本
+            speaker: 说话人ID
+            speed: 语速
+            
+        Yields:
+            bytes: WAV 格式音频数据块
+        """
+        if self.model is None:
+            logger.error("CosyVoice model not available for streaming")
+            return
+        
+        try:
+            import struct
+            
+            # 选择说话人
+            if speaker is None and self.available_spks:
+                speaker = self.available_spks[0]
+            
+            logger.info(f"[Streaming TTS] Starting with speaker: {speaker}, text: {text[:50]}...")
+            
+            # 先发送 WAV 头部（占位，稍后更新）
+            # 使用流式模式时，我们无法预知总长度，所以用 chunked transfer
+            first_chunk = True
+            
+            for output in self.model.inference_sft(
+                tts_text=text,
+                spk_id=speaker,
+                stream=True,  # 启用流式
+                speed=speed
+            ):
+                audio_tensor = output['tts_speech']
+                
+                # 转换为 16-bit PCM
+                audio_np = audio_tensor.cpu().numpy().flatten()
+                audio_int16 = (audio_np * 32767).astype('int16')
+                audio_bytes = audio_int16.tobytes()
+                
+                if first_chunk:
+                    # 发送 WAV 头部（假设总长度，实际用 chunked transfer）
+                    header = self._create_wav_header(len(audio_bytes), self.sample_rate)
+                    yield header + audio_bytes
+                    first_chunk = False
+                    logger.info(f"[Streaming TTS] First chunk sent ({len(audio_bytes)} bytes)")
+                else:
+                    yield audio_bytes
+            
+            logger.info("[Streaming TTS] Completed")
+            
+        except Exception as e:
+            logger.error(f"[Streaming TTS] Failed: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _create_wav_header(self, data_size: int, sample_rate: int) -> bytes:
+        """创建 WAV 文件头"""
+        import struct
+        
+        channels = 1
+        bits_per_sample = 16
+        byte_rate = sample_rate * channels * bits_per_sample // 8
+        block_align = channels * bits_per_sample // 8
+        
+        # WAV 头部结构
+        header = struct.pack(
+            '<4sI4s4sIHHIIHH4sI',
+            b'RIFF',
+            36 + data_size,  # 文件大小 - 8
+            b'WAVE',
+            b'fmt ',
+            16,  # fmt 块大小
+            1,   # 音频格式 (PCM)
+            channels,
+            sample_rate,
+            byte_rate,
+            block_align,
+            bits_per_sample,
+            b'data',
+            data_size
+        )
+        return header
 
 
 class SimpleTTSModule:

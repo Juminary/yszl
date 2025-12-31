@@ -8,21 +8,12 @@ server:
 client:
   server_url: "http://localhost:6007"
 
-# 语音识别配置 (Paraformer-Large)
+# 语音识别配置 (SenseVoice - 多语言/方言支持)
 asr:
-  model: "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
+  model: "iic/SenseVoiceSmall"
   provider: "funasr"
   device: "cuda"  # 使用GPU加速
-  language: "zh"
-  # 医疗热词 - 扩充版
-  hotwords: >
-    阿莫西林 布洛芬 头孢 感冒 发烧 血压 血糖 
-    高血压 糖尿病 心脏病 胃痛 头痛 咳嗽 
-    过敏 消炎药 降压药 胰岛素 奥美拉唑 氨氯地平 
-    二甲双胍 阿司匹林 内科 外科 儿科 妇科 
-    骨科 眼科 耳鼻喉科 皮肤科 急诊科 
-    发热 腹痛 胸痛 呼吸困难 恶心 呕吐 腹泻
-    肺炎 胃炎 冠心病 高血脂 关节炎
+  language: "auto"  # 自动语言检测
 
 # 情感识别配置 (SenseVoice)
 emotion:
@@ -79,6 +70,7 @@ tts:
   device: "cuda"  # 使用GPU加速
   sample_rate: 22050
   fast_mode: true # 启用快速模式（使用macOS say，即时响应）
+  streaming: true  # 启用流式TTS（边生成边播放）
 
 # 音频处理配置
 audio:
