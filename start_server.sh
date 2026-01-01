@@ -15,7 +15,6 @@ if ! command -v python &> /dev/null; then
 fi
 
 echo "启动服务器..."
-echo "端口: 6007"
 echo ""
 
 python app.py

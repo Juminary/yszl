@@ -10,6 +10,7 @@ __pycache__/
 # 虚拟环境
 venv/
 venv312/
+venv_linux/
 .venv/
 
 # IDE
