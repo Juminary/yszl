@@ -1,85 +1,77 @@
-# Python
+# =============================================
+# 医疗语音助手项目 .gitignore
+# =============================================
+
+# Python 缓存
 __pycache__/
 *.py[cod]
-*$py.class
 *.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
 
-# Virtual Environment
+# 虚拟环境
 venv/
-env/
-ENV/
 venv312/
 .venv/
 
-# Models and Large weights
-models/
-server/models/
-server/CosyVoice/
-Huatuo26M-Lite/*.jsonl
+# IDE
+.vscode/
+.idea/
+
+# 操作系统
+.DS_Store
+
+# =============================================
+# 模型文件（忽略内容，保留目录结构）
+# =============================================
+# 模型权重
 *.pth
 *.pt
 *.bin
 *.ckpt
 *.onnx
-*.engine
+*.safetensors
 
-# Data
-data/
-server/data/
-*.pkl
-*.db
-*.csv
+# 模型目录（忽略内容，保留 .gitkeep）
+server/models/asr/*
+!server/models/asr/.gitkeep
+server/models/speaker/*
+!server/models/speaker/.gitkeep
+server/models/dialogue/*
+!server/models/dialogue/.gitkeep
+server/models/embedding/*
+!server/models/embedding/.gitkeep
+server/models/tts/*
+!server/models/tts/.gitkeep
+server/models/cache/*
+!server/models/cache/.gitkeep
+
+# ModelScope 缓存
+**/._____temp/
+**/.lock/
+
+# =============================================
+# RAG 索引（忽略内容，保留目录结构）
+# =============================================
+server/data/rag_index/*
+!server/data/rag_index/.gitkeep
+
+# 临时音频文件
+# =============================================
+server/temp/*.wav
+server/temp/*.aiff
+
+# 日志
+*.log
+server/logs/*
+!server/logs/.gitkeep
+
+# =============================================
+# CosyVoice 库（太大，跳过推送）
+# =============================================
+server/libs/cosyvoice/
+
+# =============================================
+# 大型数据文件
+# =============================================
+server/data/Huatuo26M-Lite/
 *.jsonl
 
-# Logs
-logs/
-server/logs/
-*.log
-
-# Temporary files
-temp/
-server/temp/
-*.wav
-*.aiff
-*.mp3
-*.mp4
-test_*.wav
-temp_*.wav
-chat_response.wav
-cosyvoice_test.wav
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-*.code-workspace
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Jupyter
-.ipynb_checkpoints/
-*.ipynb
-
-# Cache
-.cache/
-*.cache

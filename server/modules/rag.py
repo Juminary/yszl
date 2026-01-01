@@ -60,7 +60,28 @@ class RAGModule:
         try:
             # 加载 Embedding 模型
             logger.info(f"Loading embedding model: {embedding_model}")
-            self.model = SentenceTransformer(embedding_model, device=device)
+            
+            # 优先使用 ModelScope 下载模型
+            if 'BAAI' in embedding_model or 'bge' in embedding_model.lower():
+                try:
+                    from modelscope import snapshot_download
+                    # 从 ModelScope 下载 bge 模型
+                    models_dir = Path(__file__).parent.parent / "models" / "embedding"
+                    models_dir.mkdir(parents=True, exist_ok=True)
+                    ms_model_name = "AI-ModelScope/bge-small-zh-v1.5"
+                    logger.info(f"Downloading {ms_model_name} from ModelScope...")
+                    model_path = snapshot_download(ms_model_name, cache_dir=str(models_dir))
+                    logger.info(f"Embedding model downloaded to: {model_path}")
+                    self.model = SentenceTransformer(model_path, device=device)
+                except ImportError:
+                    logger.warning("modelscope not available, falling back to HuggingFace")
+                    self.model = SentenceTransformer(embedding_model, device=device)
+                except Exception as e:
+                    logger.warning(f"ModelScope download failed: {e}, falling back to HuggingFace")
+                    self.model = SentenceTransformer(embedding_model, device=device)
+            else:
+                self.model = SentenceTransformer(embedding_model, device=device)
+            
             self.embedding_dim = self.model.get_sentence_embedding_dimension()
             logger.info(f"Embedding model loaded, dimension: {self.embedding_dim}")
             

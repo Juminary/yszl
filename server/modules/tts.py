@@ -13,16 +13,16 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# 添加 CosyVoice 和 Matcha-TTS 到路径（顺序很重要！Matcha-TTS 必须先添加）
-COSYVOICE_PATH = os.path.join(os.path.dirname(__file__), '..', 'CosyVoice')
-if os.path.exists(COSYVOICE_PATH):
+# CosyVoice 库路径（已集成到 libs/cosyvoice/）
+COSYVOICE_LIB_PATH = os.path.join(os.path.dirname(__file__), '..', 'libs', 'cosyvoice')
+if os.path.exists(COSYVOICE_LIB_PATH):
     # 先添加 Matcha-TTS（必须在 CosyVoice 之前）
-    third_party_path = os.path.join(COSYVOICE_PATH, 'third_party', 'Matcha-TTS')
+    third_party_path = os.path.join(COSYVOICE_LIB_PATH, 'third_party', 'Matcha-TTS')
     if os.path.exists(third_party_path) and third_party_path not in sys.path:
         sys.path.insert(0, third_party_path)
     # 再添加 CosyVoice
-    if COSYVOICE_PATH not in sys.path:
-        sys.path.insert(0, COSYVOICE_PATH)
+    if COSYVOICE_LIB_PATH not in sys.path:
+        sys.path.insert(0, COSYVOICE_LIB_PATH)
 
 # 尝试导入 CosyVoice
 COSYVOICE_AVAILABLE = False
@@ -51,8 +51,8 @@ class TTSModule:
         self.model = None
         self.sample_rate = 22050
         
-        # CosyVoice 模型路径
-        model_dir = os.path.join(COSYVOICE_PATH, 'pretrained_models', 'CosyVoice-300M-Instruct')
+        # CosyVoice 模型路径（已移到统一的 models/tts/ 目录）
+        model_dir = os.path.join(os.path.dirname(__file__), '..', 'models', 'tts', 'CosyVoice-300M-Instruct')
         
         if COSYVOICE_AVAILABLE and os.path.exists(model_dir):
             logger.info(f"Loading CosyVoice from {model_dir}")

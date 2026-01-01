@@ -65,12 +65,26 @@ class EmotionModule:
             raise ImportError("SenseVoice not available. Please install with: pip install funasr")
         
         logger.info("Loading SenseVoice model...")
-        # 加载SenseVoice模型
+        # 加载SenseVoice模型 - 优先使用本地，不存在则下载到 server/models
+        from modelscope import snapshot_download
+        
+        models_dir = Path(__file__).parent.parent / "models" / "asr"
+        model_path = models_dir / "SenseVoiceSmall"
+        
+        if model_path.exists():
+            logger.info(f"Loading local model from: {model_path}")
+            model_to_load = str(model_path)
+        else:
+            models_dir.mkdir(parents=True, exist_ok=True)
+            logger.info("Downloading SenseVoice from ModelScope...")
+            model_to_load = snapshot_download("iic/SenseVoiceSmall", cache_dir=str(models_dir))
+            logger.info(f"Downloaded to: {model_to_load}")
+        
         self.model = AutoModel(
-            model="iic/SenseVoiceSmall",
+            model=model_to_load,
             trust_remote_code=True,
             device=self.device,
-            disable_update=True  # 禁用更新检查，使用本地模型
+            disable_update=True
         )
         logger.info("SenseVoice model loaded successfully")
     
