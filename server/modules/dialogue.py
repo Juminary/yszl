@@ -61,7 +61,7 @@ class DialogueModule:
         
         logger.info(f"Loading dialogue model: {model_name} on {self.device}")
         try:
-            # 处理本地路径：如果是相对路径，转换为绝对路径
+            # 处理本地路径：只有明确指定相对/绝对路径时才当作本地文件
             import os
             from pathlib import Path
             
@@ -82,6 +82,7 @@ class DialogueModule:
                 model_path = os.path.abspath(model_name)
                 logger.info(f"Using local model path: {model_path}")
             else:
+                # 当作 HuggingFace repo ID，让 transformers 自动处理
                 model_path = model_name
             
             # 加载tokenizer

@@ -52,7 +52,19 @@ class TTSModule:
         self.sample_rate = 22050
         
         # CosyVoice 模型路径（已移到统一的 models/tts/ 目录）
-        model_dir = os.path.join(os.path.dirname(__file__), '..', 'models', 'tts', 'CosyVoice-300M-Instruct')
+        models_parent_dir = os.path.join(os.path.dirname(__file__), '..', 'models', 'tts')
+        model_dir = os.path.join(models_parent_dir, 'CosyVoice-300M-Instruct')
+        
+        # 如果模型不存在，尝试从 ModelScope 下载
+        if COSYVOICE_AVAILABLE and not os.path.exists(model_dir):
+            logger.info("CosyVoice model not found locally. Attempting to download from ModelScope...")
+            try:
+                from modelscope import snapshot_download
+                # 下载到 models/tts 目录下，ModelScope 会自动创建子目录
+                download_path = snapshot_download('iic/CosyVoice-300M-Instruct', local_dir=model_dir)
+                logger.info(f"CosyVoice model downloaded to {download_path}")
+            except Exception as e:
+                logger.error(f"Failed to download CosyVoice model: {e}")
         
         if COSYVOICE_AVAILABLE and os.path.exists(model_dir):
             logger.info(f"Loading CosyVoice from {model_dir}")
@@ -73,7 +85,7 @@ class TTSModule:
             if not COSYVOICE_AVAILABLE:
                 logger.warning("CosyVoice module not available")
             if not os.path.exists(model_dir):
-                logger.warning(f"CosyVoice model not found at {model_dir}")
+                logger.warning(f"CosyVoice model not found at {model_dir} and download failed")
     
     def synthesize(self, text: str, output_path: str = None, 
                    speaker: str = None, language: str = "zh-cn",
