@@ -54,22 +54,25 @@ class SpeakerModule:
         if SPEAKER_MODEL_AVAILABLE:
             logger.info("Loading Cam++ speaker verification model...")
             try:
-                import os
-                # 优先使用本地模型路径
-                local_model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'iic', 'speech_campplus_sv_zh-cn_16k-common')
-                if os.path.exists(local_model_path):
-                    model_path = local_model_path
-                    logger.info(f"Using local model: {model_path}")
-                else:
-                    # 回退到ModelScope下载
-                    model_path = "iic/speech_campplus_sv_zh-cn_16k-common"
-                    logger.info("Local model not found, will download from ModelScope")
+                # 加载 Cam++ 模型 - 优先使用本地，不存在则下载到 server/models
+                from modelscope import snapshot_download
                 
-                # 使用 FunASR 加载 Cam++ 模型
+                models_dir = Path(__file__).parent.parent / "models" / "speaker"
+                model_path = models_dir / "campplus"
+                
+                if model_path.exists():
+                    logger.info(f"Loading local model from: {model_path}")
+                    model_to_load = str(model_path)
+                else:
+                    models_dir.mkdir(parents=True, exist_ok=True)
+                    logger.info("Downloading Cam++ from ModelScope...")
+                    model_to_load = snapshot_download("iic/speech_campplus_sv_zh-cn_16k-common", cache_dir=str(models_dir))
+                    logger.info(f"Downloaded to: {model_to_load}")
+                
                 self.model = AutoModel(
-                    model=model_path,
+                    model=model_to_load,
                     device=self.device,
-                    disable_update=True  # 禁用更新检查
+                    disable_update=True
                 )
                 logger.info("Cam++ model loaded successfully")
             except Exception as e:

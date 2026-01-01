@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 sys.path.insert(0, str(Path(__file__).parent))
 
 def build_rag_index(
-    input_file: str = "Huatuo26M-Lite/format_data.jsonl",
+    input_file: str = "data/Huatuo26M-Lite/format_data.jsonl",
     output_dir: str = "data/rag_index",
     embedding_model: str = "BAAI/bge-small-zh-v1.5",
     max_samples: int = None,  # 设置为 None 使用全部数据，或指定数量

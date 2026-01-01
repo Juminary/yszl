@@ -21,7 +21,8 @@ class DialogueModule:
                  temperature: float = 0.7,
                  top_p: float = 0.9,
                  history_length: int = 10,
-                 rag_module = None):
+                 rag_module = None,
+                 system_prompt: str = None):
         """
         初始化对话模块
         
@@ -33,6 +34,7 @@ class DialogueModule:
             top_p: top-p采样参数
             history_length: 保留的对话历史轮数
             rag_module: RAG 检索模块（可选）
+            system_prompt: 系统提示词（可选，从配置文件读取）
         """
         # 设备选择
         if device == "cuda" and torch.cuda.is_available():
@@ -51,6 +53,9 @@ class DialogueModule:
         # RAG 模块
         self.rag_module = rag_module
         
+        # 系统提示词（从配置文件读取或使用默认值）
+        self.default_system_prompt = system_prompt
+        
         # 对话历史管理
         self.conversations = {}
         
@@ -58,21 +63,32 @@ class DialogueModule:
         try:
             # 处理本地路径：只有明确指定相对/绝对路径时才当作本地文件
             import os
-            # 判断是否为本地路径：以 ./ 或 / 开头，或者包含 models/ 前缀
-            if model_name.startswith('./') or model_name.startswith('/') or model_name.startswith('models/'):
+            from pathlib import Path
+            
+            # 优先使用 ModelScope 下载模型
+            if model_name.startswith('Qwen/') or model_name.startswith('qwen/'):
+                try:
+                    from modelscope import snapshot_download
+                    # 从 ModelScope 下载模型
+                    models_dir = Path(__file__).parent.parent / "models" / "dialogue"
+                    models_dir.mkdir(parents=True, exist_ok=True)
+                    logger.info(f"Downloading {model_name} from ModelScope...")
+                    model_path = snapshot_download(model_name, cache_dir=str(models_dir))
+                    logger.info(f"Model downloaded to: {model_path}")
+                except ImportError:
+                    logger.warning("modelscope not available, falling back to HuggingFace")
+                    model_path = model_name
+            elif model_name.startswith('./') or model_name.startswith('/') or os.path.exists(model_name):
                 model_path = os.path.abspath(model_name)
                 logger.info(f"Using local model path: {model_path}")
-                use_local = True
             else:
                 # 当作 HuggingFace repo ID，让 transformers 自动处理
                 model_path = model_name
-                use_local = False
             
             # 加载tokenizer
             self.tokenizer = AutoTokenizer.from_pretrained(
                 model_path, 
-                trust_remote_code=True,
-                local_files_only=use_local
+                trust_remote_code=True
             )
             
             # 加载模型
@@ -80,8 +96,7 @@ class DialogueModule:
                 model_path,
                 trust_remote_code=True,
                 torch_dtype=torch.float16 if self.device != "cpu" else torch.float32,
-                device_map="auto" if self.device == "cuda" else None,
-                local_files_only=use_local
+                device_map="auto" if self.device == "cuda" else None
             )
             
             if self.device == "mps":
@@ -180,16 +195,19 @@ class DialogueModule:
         try:
             # 初始化或重置会话
             if session_id not in self.conversations or reset:
-                default_prompt = """你是一个智能语音助手。你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求：
+                # 优先级：1. 调用时传入的 system_prompt  2. 配置文件中的  3. 硬编码默认值
+                fallback_prompt = """你是一个智能语音助手。你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求：
 一，只用纯中文回答，禁止英文、数字、字母。
 二，只用中文逗号和句号，禁止其他标点如冒号、问号、感叹号、括号、引号。
 三，禁止使用星号、井号、横线等任何符号。
 四，禁止使用列表、编号、分点格式，必须写成连贯的一段话。
 五，态度温和友好。"""
                 
+                prompt_to_use = system_prompt or self.default_system_prompt or fallback_prompt
+                
                 self.conversations[session_id] = {
                     "history": deque(maxlen=self.history_length),
-                    "system_prompt": system_prompt or default_prompt
+                    "system_prompt": prompt_to_use
                 }
             
             conversation = self.conversations[session_id]

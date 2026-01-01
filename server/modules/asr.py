@@ -50,22 +50,28 @@ class ASRModule:
         
         logger.info(f"Loading SenseVoice model on {self.device}")
         try:
-            import os
-            # 优先使用本地模型路径
-            local_model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'iic', 'SenseVoiceSmall')
-            if os.path.exists(local_model_path):
-                model_path = local_model_path
-                logger.info(f"Using local model: {model_path}")
-            else:
-                # 回退到ModelScope下载
-                model_path = "iic/SenseVoiceSmall"
-                logger.info(f"Local model not found, will download from ModelScope")
+            # 加载SenseVoice模型 - 优先使用本地，不存在则下载到 server/models
+            from pathlib import Path
+            from modelscope import snapshot_download
             
-            # 加载SenseVoice模型
+            models_dir = Path(__file__).parent.parent / "models" / "asr"
+            model_path = models_dir / "SenseVoiceSmall"
+            
+            if model_path.exists():
+                # 本地模型存在，直接加载
+                logger.info(f"Loading local model from: {model_path}")
+                model_to_load = str(model_path)
+            else:
+                # 本地不存在，从 ModelScope 下载
+                models_dir.mkdir(parents=True, exist_ok=True)
+                logger.info("Downloading SenseVoice from ModelScope...")
+                model_to_load = snapshot_download("iic/SenseVoiceSmall", cache_dir=str(models_dir))
+                logger.info(f"Downloaded to: {model_to_load}")
+            
             self.model = AutoModel(
-                model=model_path,
+                model=model_to_load,
                 device=self.device,
-                disable_update=True,  # 禁用更新检查
+                disable_update=True,
             )
             logger.info("SenseVoice model loaded successfully")
         except Exception as e:

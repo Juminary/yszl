@@ -236,7 +236,8 @@ def initialize_modules():
                 temperature=dialogue_config.get('temperature', 0.7),
                 top_p=dialogue_config.get('top_p', 0.9),
                 history_length=dialogue_config.get('history_length', 10),
-                rag_module=rag_module  # 传入 RAG 模块
+                rag_module=rag_module,
+                system_prompt=dialogue_config.get('system_prompt')  # 从配置读取系统提示词
             )
             logger.info("Dialogue module initialized (Qwen2.5-0.5B)" + (" with RAG" if rag_module else ""))
         except Exception as inner_e:
