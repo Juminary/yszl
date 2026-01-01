@@ -69,7 +69,7 @@ tts:
   provider: "modelscope"
   device: "cuda"  # 使用GPU加速
   sample_rate: 22050
-  fast_mode: false # 启用快速模式（使用macOS say，即时响应）
+  fast_mode: false  # CosyVoice模式（false=高质量，true=快速但低质量）
   streaming: true  # 启用流式TTS（边生成边播放）
 
 # 音频处理配置
@@ -96,9 +96,8 @@ paths:
   data: "data"
   logs: "logs"
   temp: "temp"
-# RAG 检索增强配置
 rag:
-  enabled: true
+  enabled: true  # 已修复本地加载问题
   embedding_model: "BAAI/bge-small-zh-v1.5"
   index_path: "data/rag_index"
   top_k: 3
@@ -107,7 +106,7 @@ rag:
 
 # 知识图谱配置 (Neo4j)
 knowledge_graph:
-  enabled: true
+  enabled: false
   host: "localhost"
   port: 7474
   user: "neo4j"

@@ -1,6 +1,11 @@
 """
 音频播放模块
 用于树莓派扬声器音频播放
+
+增强功能:
+- 支持打断(Barge-in)
+- 事件总线集成
+- TTS参考信号输出(用于AEC)
 """
 
 import pyaudio
@@ -9,8 +14,15 @@ import numpy as np
 import logging
 from pathlib import Path
 import soundfile as sf
+import threading
+from typing import Optional, Callable, Generator
 
-logger = logging.getLogger(__name__)
+# 尝试导入事件总线
+try:
+    from event_bus import EventBus, EventType, get_event_bus
+    EVENT_BUS_AVAILABLE = True
+except ImportError:
+    EVENT_BUS_AVAILABLE = False
 
 
 class AudioPlayer:
@@ -326,6 +338,361 @@ class StreamingAudioPlayer:
         logger.info("[StreamingPlayer] Playback completed")
 
 
+logger = logging.getLogger(__name__)
+
+
+class InterruptibleAudioPlayer:
+    """
+    可中断音频播放器
+    
+    支持:
+    - 打断播放(Barge-in)
+    - 事件总线集成
+    - TTS参考信号回调(用于AEC)
+    """
+    
+    def __init__(
+        self,
+        event_bus: Optional['EventBus'] = None,
+        sample_rate: int = 22050,
+        channels: int = 1,
+        chunk_size: int = 2048
+    ):
+        """
+        初始化可中断播放器
+        
+        Args:
+            event_bus: 事件总线实例
+            sample_rate: 默认采样率
+            channels: 默认声道数
+            chunk_size: 播放块大小
+        """
+        self.event_bus = event_bus
+        if event_bus is None and EVENT_BUS_AVAILABLE:
+            self.event_bus = get_event_bus()
+        
+        self.sample_rate = sample_rate
+        self.channels = channels
+        self.chunk_size = chunk_size
+        
+        self.audio = pyaudio.PyAudio()
+        self._playing = False
+        self._interrupted = False
+        self._play_lock = threading.Lock()
+        self._current_text = ""  # 当前播放的文本（用于日志）
+        
+        # 回调函数
+        self._on_reference_chunk: Optional[Callable] = None
+        self._on_playback_start: Optional[Callable] = None
+        self._on_playback_end: Optional[Callable] = None
+        
+        # 订阅打断事件
+        if self.event_bus and EVENT_BUS_AVAILABLE:
+            self.event_bus.subscribe(EventType.BARGE_IN, self._on_barge_in)
+        
+        logger.info(f"InterruptibleAudioPlayer initialized: {sample_rate}Hz, chunk_size={chunk_size}")
+    
+    def _on_barge_in(self, event):
+        """处理打断事件"""
+        if self._playing:
+            self._interrupted = True
+            logger.info(f"Playback interrupted by barge-in (was playing: {self._current_text[:30]}...)")
+    
+    @property
+    def is_playing(self) -> bool:
+        """是否正在播放"""
+        return self._playing
+    
+    @property
+    def was_interrupted(self) -> bool:
+        """上次播放是否被中断"""
+        return self._interrupted
+    
+    def play(
+        self,
+        audio_data: np.ndarray,
+        sample_rate: int = None,
+        text: str = "",
+        emit_events: bool = True
+    ) -> bool:
+        """
+        播放音频，支持打断
+        
+        Args:
+            audio_data: 音频数据
+            sample_rate: 采样率（默认使用初始化时的设置）
+            text: 对应的文本（用于日志）
+            emit_events: 是否发布事件
+            
+        Returns:
+            bool: True=播放完成, False=被中断
+        """
+        sample_rate = sample_rate or self.sample_rate
+        
+        with self._play_lock:
+            self._playing = True
+            self._interrupted = False
+            self._current_text = text
+            
+            # 发布TTS开始事件
+            if emit_events and self.event_bus and EVENT_BUS_AVAILABLE:
+                self.event_bus.emit(
+                    EventType.TTS_START,
+                    data={"text": text[:100]},
+                    source="interruptible_player"
+                )
+            
+            # 回调
+            if self._on_playback_start:
+                try:
+                    self._on_playback_start(text)
+                except Exception as e:
+                    logger.error(f"Playback start callback error: {e}")
+            
+            try:
+                # 确保数据格式正确
+                if audio_data.dtype != np.int16:
+                    if np.abs(audio_data).max() <= 1.0:
+                        audio_data = (audio_data * 32767).astype(np.int16)
+                    else:
+                        audio_data = audio_data.astype(np.int16)
+                
+                # 打开音频流
+                stream = self.audio.open(
+                    format=pyaudio.paInt16,
+                    channels=self.channels,
+                    rate=sample_rate,
+                    output=True,
+                    frames_per_buffer=self.chunk_size
+                )
+                
+                # 分块播放
+                total_samples = len(audio_data)
+                played_samples = 0
+                
+                for i in range(0, total_samples, self.chunk_size):
+                    # 检查是否被打断
+                    if self._interrupted:
+                        logger.info(f"Playback interrupted at {played_samples}/{total_samples} samples")
+                        break
+                    
+                    chunk = audio_data[i:i + self.chunk_size]
+                    
+                    # 回调参考信号（用于AEC）
+                    if self._on_reference_chunk:
+                        try:
+                            self._on_reference_chunk(chunk)
+                        except Exception:
+                            pass
+                    
+                    stream.write(chunk.tobytes())
+                    played_samples += len(chunk)
+                
+                stream.stop_stream()
+                stream.close()
+                
+            except Exception as e:
+                logger.error(f"Playback error: {e}")
+            finally:
+                self._playing = False
+                
+                # 发布TTS结束事件
+                if emit_events and self.event_bus and EVENT_BUS_AVAILABLE:
+                    if self._interrupted:
+                        self.event_bus.emit(
+                            EventType.TTS_INTERRUPTED,
+                            data={"text": text[:100]},
+                            source="interruptible_player"
+                        )
+                    else:
+                        self.event_bus.emit(
+                            EventType.TTS_END,
+                            data={"text": text[:100]},
+                            source="interruptible_player"
+                        )
+                
+                # 回调
+                if self._on_playback_end:
+                    try:
+                        self._on_playback_end(self._interrupted)
+                    except Exception as e:
+                        logger.error(f"Playback end callback error: {e}")
+            
+            return not self._interrupted
+    
+    def play_file(self, audio_path: str, text: str = "") -> bool:
+        """
+        播放音频文件，支持打断
+        
+        Args:
+            audio_path: 音频文件路径
+            text: 对应的文本（用于日志）
+            
+        Returns:
+            bool: True=播放完成, False=被中断
+        """
+        try:
+            audio_data, sample_rate = sf.read(audio_path, dtype='int16')
+            
+            # 处理立体声
+            if len(audio_data.shape) > 1:
+                audio_data = audio_data[:, 0]  # 取第一个通道
+            
+            return self.play(audio_data, sample_rate, text)
+            
+        except Exception as e:
+            logger.error(f"Failed to play file {audio_path}: {e}")
+            return False
+    
+    def stop(self):
+        """停止播放"""
+        self._interrupted = True
+    
+    def play_stream(
+        self,
+        audio_stream,
+        sample_rate: int = 22050,
+        text: str = "",
+        emit_events: bool = True
+    ) -> bool:
+        """
+        流式播放音频，边接收边播放
+        
+        Args:
+            audio_stream: 可迭代的音频数据流（每次yield一块bytes）
+            sample_rate: 采样率
+            text: 对应的文本（用于日志）
+            emit_events: 是否发布事件
+            
+        Returns:
+            bool: True=播放完成, False=被中断
+        """
+        with self._play_lock:
+            self._playing = True
+            self._interrupted = False
+            self._current_text = text
+            
+            # 发布TTS开始事件
+            if emit_events and self.event_bus and EVENT_BUS_AVAILABLE:
+                self.event_bus.emit(
+                    EventType.TTS_START,
+                    data={"text": text[:100], "streaming": True},
+                    source="interruptible_player"
+                )
+            
+            # 回调
+            if self._on_playback_start:
+                try:
+                    self._on_playback_start(text)
+                except Exception as e:
+                    logger.error(f"Playback start callback error: {e}")
+            
+            try:
+                # 打开音频流
+                stream = self.audio.open(
+                    format=pyaudio.paInt16,
+                    channels=self.channels,
+                    rate=sample_rate,
+                    output=True,
+                    frames_per_buffer=self.chunk_size
+                )
+                
+                chunk_count = 0
+                first_chunk_received = False
+                
+                for chunk_data in audio_stream:
+                    # 检查是否被打断
+                    if self._interrupted:
+                        logger.info(f"Streaming playback interrupted at chunk {chunk_count}")
+                        break
+                    
+                    if not first_chunk_received:
+                        first_chunk_received = True
+                        logger.info("First audio chunk received, starting playback...")
+                    
+                    # 转换bytes到numpy
+                    if isinstance(chunk_data, bytes):
+                        audio_chunk = np.frombuffer(chunk_data, dtype=np.int16)
+                    else:
+                        audio_chunk = chunk_data
+                    
+                    # 回调参考信号（用于AEC）
+                    if self._on_reference_chunk:
+                        try:
+                            self._on_reference_chunk(audio_chunk)
+                        except Exception:
+                            pass
+                    
+                    # 播放
+                    stream.write(audio_chunk.tobytes())
+                    chunk_count += 1
+                
+                stream.stop_stream()
+                stream.close()
+                logger.info(f"Streaming playback finished: {chunk_count} chunks")
+                
+            except Exception as e:
+                logger.error(f"Streaming playback error: {e}")
+            finally:
+                self._playing = False
+                
+                # 发布TTS结束事件
+                if emit_events and self.event_bus and EVENT_BUS_AVAILABLE:
+                    if self._interrupted:
+                        self.event_bus.emit(
+                            EventType.TTS_INTERRUPTED,
+                            data={"text": text[:100], "streaming": True},
+                            source="interruptible_player"
+                        )
+                    else:
+                        self.event_bus.emit(
+                            EventType.TTS_END,
+                            data={"text": text[:100], "streaming": True},
+                            source="interruptible_player"
+                        )
+                
+                # 回调
+                if self._on_playback_end:
+                    try:
+                        self._on_playback_end(self._interrupted)
+                    except Exception as e:
+                        logger.error(f"Playback end callback error: {e}")
+            
+            return not self._interrupted
+    
+    def on_reference_chunk(self, callback: Callable):
+        """
+        设置参考信号回调（用于AEC）
+        
+        Args:
+            callback: (audio_chunk: np.ndarray) -> None
+        """
+        self._on_reference_chunk = callback
+    
+    def on_playback_start(self, callback: Callable):
+        """
+        设置播放开始回调
+        
+        Args:
+            callback: (text: str) -> None
+        """
+        self._on_playback_start = callback
+    
+    def on_playback_end(self, callback: Callable):
+        """
+        设置播放结束回调
+        
+        Args:
+            callback: (was_interrupted: bool) -> None
+        """
+        self._on_playback_end = callback
+    
+    def __del__(self):
+        """清理资源"""
+        if hasattr(self, 'audio'):
+            self.audio.terminate()
+
+
 if __name__ == "__main__":
     # 测试代码
     logging.basicConfig(level=logging.INFO)
@@ -337,5 +704,27 @@ if __name__ == "__main__":
     for device in player.list_devices():
         print(f"  {device['index']}: {device['name']}")
     
-    # 测试播放
-    # player.play_file("test_audio.wav")
+    # 测试可中断播放器
+    print("\n--- Testing InterruptibleAudioPlayer ---")
+    interruptible_player = InterruptibleAudioPlayer()
+    
+    def on_ref_chunk(chunk):
+        pass  # AEC参考信号回调位置
+    
+    interruptible_player.on_reference_chunk(on_ref_chunk)
+    
+    # 生成测试音频（正弦波）
+    import math
+    duration = 3.0
+    freq = 440.0
+    sr = 22050
+    t = np.linspace(0, duration, int(sr * duration), False)
+    test_audio = (np.sin(2 * math.pi * freq * t) * 16000).astype(np.int16)
+    
+    print("Playing test audio (interrupt by Ctrl+C)...")
+    try:
+        completed = interruptible_player.play(test_audio, sr, "Test audio")
+        print(f"Playback {'completed' if completed else 'interrupted'}")
+    except KeyboardInterrupt:
+        interruptible_player.stop()
+        print("Stopped by user")

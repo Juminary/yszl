@@ -1,6 +1,12 @@
 """
 音频采集模块
 用于树莓派麦克风音频采集
+
+增强功能:
+- 异步音频采集
+- 事件总线集成
+- 持续监听模式
+- Silero VAD 支持
 """
 
 import pyaudio
@@ -11,8 +17,23 @@ from pathlib import Path
 import webrtcvad
 from collections import deque
 import time
+import asyncio
+import threading
+from typing import Optional, Callable, Generator
 
-logger = logging.getLogger(__name__)
+# 尝试导入事件总线（可选依赖）
+try:
+    from event_bus import EventBus, EventType, get_event_bus
+    EVENT_BUS_AVAILABLE = True
+except ImportError:
+    EVENT_BUS_AVAILABLE = False
+
+# 尝试导入 Silero VAD（更准确的VAD）
+try:
+    import torch
+    SILERO_AVAILABLE = True
+except ImportError:
+    SILERO_AVAILABLE = False
 
 
 class AudioCapture:
@@ -306,6 +327,313 @@ class AudioCapture:
             self.audio.terminate()
 
 
+logger = logging.getLogger(__name__)
+
+
+class AsyncAudioCapture:
+    """
+    异步音频采集类
+    
+    支持持续监听模式，与事件总线集成
+    用于全双工交互场景
+    """
+    
+    def __init__(
+        self,
+        sample_rate: int = 16000,
+        channels: int = 1,
+        chunk_duration_ms: int = 30,
+        energy_threshold: int = 1500,
+        event_bus: Optional['EventBus'] = None,
+        use_silero_vad: bool = False
+    ):
+        """
+        初始化异步音频采集器
+        
+        Args:
+            sample_rate: 采样率
+            channels: 声道数
+            chunk_duration_ms: 每个音频块的时长(毫秒)
+            energy_threshold: 能量阈值
+            event_bus: 事件总线实例
+            use_silero_vad: 是否使用Silero VAD（更准确但更慢）
+        """
+        self.sample_rate = sample_rate
+        self.channels = channels
+        self.chunk_duration_ms = chunk_duration_ms
+        self.chunk_size = int(sample_rate * chunk_duration_ms / 1000)
+        self.energy_threshold = energy_threshold
+        
+        # 事件总线
+        self.event_bus = event_bus
+        if event_bus is None and EVENT_BUS_AVAILABLE:
+            self.event_bus = get_event_bus()
+        
+        # PyAudio
+        self.audio = pyaudio.PyAudio()
+        self.stream: Optional[pyaudio.Stream] = None
+        
+        # VAD
+        self.vad = webrtcvad.Vad(3)  # 最激进模式
+        self.use_silero_vad = use_silero_vad and SILERO_AVAILABLE
+        self.silero_model = None
+        
+        if self.use_silero_vad:
+            self._init_silero_vad()
+        
+        # 状态
+        self._running = False
+        self._paused = False
+        self._thread: Optional[threading.Thread] = None
+        
+        # 回调
+        self._on_audio_chunk: Optional[Callable] = None
+        self._on_speech_start: Optional[Callable] = None
+        self._on_speech_end: Optional[Callable] = None
+        
+        # 语音状态跟踪
+        self._speech_active = False
+        self._speech_start_time: Optional[float] = None
+        self._silence_chunks = 0
+        self._silence_threshold_chunks = int(1.5 * 1000 / chunk_duration_ms)  # 1.5秒静音
+        
+        # 录音缓冲
+        self._recording_buffer: deque = deque(maxlen=int(30 * 1000 / chunk_duration_ms))
+        
+        logger.info(f"AsyncAudioCapture initialized: {sample_rate}Hz, "
+                   f"chunk_size={self.chunk_size}, silero_vad={self.use_silero_vad}")
+    
+    def _init_silero_vad(self):
+        """初始化Silero VAD模型"""
+        try:
+            model, utils = torch.hub.load(
+                repo_or_dir='snakers4/silero-vad',
+                model='silero_vad',
+                force_reload=False
+            )
+            self.silero_model = model
+            logger.info("Silero VAD model loaded")
+        except Exception as e:
+            logger.warning(f"Failed to load Silero VAD: {e}, falling back to webrtcvad")
+            self.use_silero_vad = False
+    
+    def _is_speech(self, audio_chunk: np.ndarray) -> tuple:
+        """
+        检测是否为语音
+        
+        Returns:
+            (is_speech, confidence, energy)
+        """
+        # 计算能量
+        energy = float(np.abs(audio_chunk).mean())
+        
+        # 能量过低直接返回
+        if energy < self.energy_threshold * 0.5:
+            return False, 0.0, energy
+        
+        confidence = 0.0
+        is_speech = False
+        
+        if self.use_silero_vad and self.silero_model is not None:
+            # 使用Silero VAD
+            try:
+                audio_tensor = torch.from_numpy(audio_chunk).float() / 32768.0
+                confidence = float(self.silero_model(audio_tensor, self.sample_rate).item())
+                is_speech = confidence > 0.5
+            except Exception:
+                pass
+        
+        if not is_speech:
+            # 使用webrtcvad作为后备
+            try:
+                frame = audio_chunk.tobytes()
+                # 调整帧大小到VAD支持的长度
+                if len(frame) < 320:
+                    frame = frame + b'\x00' * (320 - len(frame))
+                elif len(frame) > 320:
+                    frame = frame[:320]
+                
+                is_speech = self.vad.is_speech(frame, self.sample_rate)
+                if is_speech and confidence == 0.0:
+                    confidence = 0.7 if energy > self.energy_threshold else 0.5
+            except Exception:
+                # VAD失败，仅用能量判断
+                is_speech = energy > self.energy_threshold
+                confidence = min(1.0, energy / (self.energy_threshold * 2))
+        
+        return is_speech, confidence, energy
+    
+    def _capture_loop(self):
+        """音频采集主循环（在后台线程运行）"""
+        try:
+            self.stream = self.audio.open(
+                format=pyaudio.paInt16,
+                channels=self.channels,
+                rate=self.sample_rate,
+                input=True,
+                frames_per_buffer=self.chunk_size
+            )
+            
+            logger.info("Audio capture started")
+            
+            while self._running:
+                if self._paused:
+                    time.sleep(0.01)
+                    continue
+                
+                try:
+                    # 读取音频数据
+                    data = self.stream.read(self.chunk_size, exception_on_overflow=False)
+                    audio_chunk = np.frombuffer(data, dtype=np.int16)
+                    
+                    # VAD检测
+                    is_speech, confidence, energy = self._is_speech(audio_chunk)
+                    
+                    # 语音状态跟踪
+                    if is_speech:
+                        if not self._speech_active:
+                            # 语音开始
+                            self._speech_active = True
+                            self._speech_start_time = time.time()
+                            self._silence_chunks = 0
+                            
+                            if self._on_speech_start:
+                                self._on_speech_start()
+                            
+                            # 发布事件
+                            if self.event_bus and EVENT_BUS_AVAILABLE:
+                                self.event_bus.emit(
+                                    EventType.SPEECH_START,
+                                    data={"timestamp": self._speech_start_time},
+                                    source="async_audio_capture"
+                                )
+                        
+                        self._silence_chunks = 0
+                        self._recording_buffer.append(audio_chunk)
+                        
+                        # 发布VAD活动事件
+                        if self.event_bus and EVENT_BUS_AVAILABLE:
+                            self.event_bus.emit(
+                                EventType.VAD_ACTIVE,
+                                data={
+                                    "energy": energy,
+                                    "confidence": confidence
+                                },
+                                source="async_audio_capture"
+                            )
+                    
+                    elif self._speech_active:
+                        # 可能是语音结束
+                        self._silence_chunks += 1
+                        self._recording_buffer.append(audio_chunk)
+                        
+                        if self._silence_chunks >= self._silence_threshold_chunks:
+                            # 语音结束
+                            self._speech_active = False
+                            duration = time.time() - (self._speech_start_time or time.time())
+                            
+                            if self._on_speech_end:
+                                audio_data = self.get_recording()
+                                self._on_speech_end(audio_data, duration)
+                            
+                            # 发布事件
+                            if self.event_bus and EVENT_BUS_AVAILABLE:
+                                self.event_bus.emit(
+                                    EventType.SPEECH_END,
+                                    data={
+                                        "duration": duration,
+                                        "chunks": len(self._recording_buffer)
+                                    },
+                                    source="async_audio_capture"
+                                )
+                            
+                            self._recording_buffer.clear()
+                    
+                    # 音频块回调
+                    if self._on_audio_chunk:
+                        self._on_audio_chunk(
+                            audio_chunk, 
+                            is_speech, 
+                            confidence, 
+                            energy
+                        )
+                    
+                except Exception as e:
+                    logger.error(f"Error in capture loop: {e}")
+                    time.sleep(0.01)
+            
+        except Exception as e:
+            logger.error(f"Failed to start audio capture: {e}")
+        finally:
+            if self.stream:
+                self.stream.stop_stream()
+                self.stream.close()
+            logger.info("Audio capture stopped")
+    
+    def start(self, device_index: int = None):
+        """开始持续采集"""
+        if self._running:
+            return
+        
+        self._running = True
+        self._paused = False
+        self._thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._thread.start()
+    
+    def stop(self):
+        """停止采集"""
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+    
+    def pause(self):
+        """暂停采集"""
+        self._paused = True
+    
+    def resume(self):
+        """恢复采集"""
+        self._paused = False
+    
+    def get_recording(self) -> np.ndarray:
+        """获取录音缓冲区的数据"""
+        if not self._recording_buffer:
+            return np.array([], dtype=np.int16)
+        return np.concatenate(list(self._recording_buffer))
+    
+    def clear_recording(self):
+        """清空录音缓冲区"""
+        self._recording_buffer.clear()
+    
+    def on_audio_chunk(self, callback: Callable):
+        """
+        设置音频块回调
+        
+        Args:
+            callback: (audio_chunk, is_speech, confidence, energy) -> None
+        """
+        self._on_audio_chunk = callback
+    
+    def on_speech_start(self, callback: Callable):
+        """设置语音开始回调"""
+        self._on_speech_start = callback
+    
+    def on_speech_end(self, callback: Callable):
+        """
+        设置语音结束回调
+        
+        Args:
+            callback: (audio_data, duration) -> None
+        """
+        self._on_speech_end = callback
+    
+    def __del__(self):
+        """清理资源"""
+        self.stop()
+        if hasattr(self, 'audio'):
+            self.audio.terminate()
+
+
 if __name__ == "__main__":
     # 测试代码
     logging.basicConfig(level=logging.INFO)
@@ -317,6 +645,27 @@ if __name__ == "__main__":
     for device in capture.list_devices():
         print(f"  {device['index']}: {device['name']}")
     
-    # 测试录音
-    # audio = capture.record(duration=3.0, output_path="test_recording.wav")
-    # print(f"Recorded {len(audio)} samples")
+    # 测试异步采集
+    print("\n--- Testing AsyncAudioCapture ---")
+    async_capture = AsyncAudioCapture()
+    
+    def on_chunk(chunk, is_speech, conf, energy):
+        if is_speech:
+            print(f"Speech detected: conf={conf:.2f}, energy={energy:.0f}")
+    
+    def on_speech_end(audio, duration):
+        print(f"Speech ended: {duration:.2f}s, {len(audio)} samples")
+    
+    async_capture.on_audio_chunk(on_chunk)
+    async_capture.on_speech_end(on_speech_end)
+    
+    print("Starting capture (Ctrl+C to stop)...")
+    async_capture.start()
+    
+    try:
+        time.sleep(10)
+    except KeyboardInterrupt:
+        pass
+    
+    async_capture.stop()
+    print("Done!")
