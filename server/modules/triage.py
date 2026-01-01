@@ -138,9 +138,124 @@ class TriageModule:
                 'rag_used': False,
                 'error': str(e)
             }
+    
+    def triage_with_paralinguistics(
+        self, 
+        query: str, 
+        audio_features: Dict = None,
+        age: Optional[int] = None, 
+        gender: Optional[str] = None
+    ) -> Dict:
+        """
+        结合副语言特征的增强导诊
+        
+        Args:
+            query: 患者症状描述（ASR识别文本）
+            audio_features: 副语言特征，包含以下字段：
+                - cough_detected: bool - 是否检测到咳嗽
+                - cough_type: str - 咳嗽类型 (dry/wet)
+                - wheeze_detected: bool - 是否检测到喘息
+                - pain_level_acoustic: int - 声学疼痛等级 (1-10)
+                - pain_level_semantic: int - 患者自述疼痛等级 (1-10)
+                - anxiety_level: str - 焦虑水平 (low/moderate/high)
+                - respiratory_distress: bool - 是否有呼吸窘迫迹象
+            age: 年龄
+            gender: 性别
+            
+        Returns:
+            增强导诊结果
+        """
+        audio_features = audio_features or {}
+        notes = []  # 额外备注
+        priority_boost = 0  # 优先级提升
+        
+        # 1. 咳嗽分析
+        if audio_features.get("cough_detected"):
+            cough_type = audio_features.get("cough_type", "unknown")
+            if cough_type == "wet":
+                notes.append("检测到湿咳，提示可能有痰液")
+            elif cough_type == "dry":
+                notes.append("检测到干咳")
+            priority_boost += 1
+        
+        # 2. 呼吸系统警报
+        if audio_features.get("wheeze_detected"):
+            notes.append("⚠️ 监测到疑似哮鸣音，建议优先呼吸科")
+            priority_boost += 2
+        
+        if audio_features.get("respiratory_distress"):
+            notes.append("⚠️ 检测到呼吸窘迫迹象，建议紧急就诊")
+            priority_boost += 3
+        
+        # 3. 语义-声学不一致检测（疼痛掩饰）
+        acoustic_pain = audio_features.get("pain_level_acoustic", 0)
+        semantic_pain = audio_features.get("pain_level_semantic", 0)
+        
+        if acoustic_pain - semantic_pain >= 4:
+            notes.append(f"⚠️ 声学特征显示高度痛苦(声学:{acoustic_pain}/自述:{semantic_pain})，与自述不符，建议仔细评估")
+            priority_boost += 2
+        elif acoustic_pain - semantic_pain >= 3:
+            notes.append(f"声学疼痛指标({acoustic_pain})略高于自述({semantic_pain})")
+        
+        # 4. 焦虑检测
+        anxiety = audio_features.get("anxiety_level", "low")
+        if anxiety == "high":
+            notes.append("患者情绪焦虑，建议安抚")
+        
+        # 5. 调用基础导诊
+        base_result = self.triage(query, age, gender)
+        
+        # 6. 调整优先级
+        original_priority = base_result.get("priority", "normal")
+        if priority_boost >= 3 or original_priority == "emergency":
+            final_priority = "emergency"
+        elif priority_boost >= 2 or original_priority == "urgent":
+            final_priority = "urgent"
+        else:
+            final_priority = original_priority
+        
+        # 7. 增强响应
+        if notes:
+            enhanced_response = base_result.get("response", "")
+            # 添加副语言分析备注
+            para_notes = "，".join(notes)
+            enhanced_response = f"{enhanced_response}（声学分析备注：{para_notes}）"
+            base_result["response"] = enhanced_response
+        
+        # 8. 添加副语言分析结果
+        base_result["priority"] = final_priority
+        base_result["priority_boosted"] = priority_boost > 0
+        base_result["paralinguistic_notes"] = notes
+        base_result["audio_features"] = audio_features
+        
+        # 9. 科室推荐调整
+        if audio_features.get("wheeze_detected") or audio_features.get("respiratory_distress"):
+            base_result["recommended_department_override"] = "呼吸内科/急诊科"
+        
+        logger.info(f"[增强导诊] 优先级: {original_priority} -> {final_priority}, 备注: {notes}")
+        
+        return base_result
 
 
 if __name__ == "__main__":
     # 测试代码（需要初始化 RAG 和对话模块）
     print("TriageModule 需要 RAG 和对话模块才能运行")
     print("请通过 app.py 启动服务器进行测试")
+    
+    # 副语言增强导诊示例
+    print("\n副语言增强导诊示例：")
+    print("""
+    audio_features = {
+        "cough_detected": True,
+        "cough_type": "wet",
+        "wheeze_detected": True,
+        "pain_level_acoustic": 7,
+        "pain_level_semantic": 3,
+        "anxiety_level": "high",
+        "respiratory_distress": True
+    }
+    result = triage_module.triage_with_paralinguistics(
+        query="我咳嗽两天了，有点喘",
+        audio_features=audio_features
+    )
+    """)

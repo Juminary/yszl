@@ -66,9 +66,11 @@ MODELS = {
     "embedding": {
         "name": "BAAI/bge-small-zh-v1.5",
         "source": "huggingface",
-        "path": None,  # HuggingFace会自动缓存
+        "path": MODELS_DIR / "models--BAAI--bge-small-zh-v1.5",
         "description": "RAG向量嵌入模型"
-    }
+    },
+    # 注意: 音频事件检测(咳嗽/喘息)使用 sound_event.py 模块
+    # 该模块优先使用频谱分析(无需额外模型)，或可选TensorFlow Hub的YAMNet
 }
 
 

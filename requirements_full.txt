@@ -86,6 +86,7 @@ numpy==2.3.5
 omegaconf==2.3.0
 onnxruntime==1.23.2
 openai-whisper==20250625
+opensmile==2.5.0
 oss2==2.19.1
 packaging==25.0
 pandas==2.3.3
