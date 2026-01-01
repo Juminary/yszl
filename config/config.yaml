@@ -33,7 +33,7 @@ speaker:
 # 对话系统配置 (Qwen2.5-0.5B-Instruct)
 dialogue:
   # 使用项目内下载的相对路径，避免绝对路径报错
-  model: "Qwen/Qwen2.5-0.5B-Instruct"
+  model: "models/Qwen/Qwen2.5-0.5B-Instruct"
   max_length: 512
   temperature: 0.7
   top_p: 0.9
@@ -70,7 +70,7 @@ tts:
   provider: "modelscope"
   device: "cuda"  # 使用GPU加速
   sample_rate: 22050
-  fast_mode: true # 启用快速模式（使用macOS say，即时响应）
+  fast_mode: false # CosyVoice模式
   streaming: true  # 启用流式TTS（边生成边播放）
 
 # 音频处理配置
@@ -97,9 +97,8 @@ paths:
   data: "data"
   logs: "logs"
   temp: "temp"
-# RAG 检索增强配置
 rag:
-  enabled: true
+  enabled: true  # 已修复本地加载问题
   embedding_model: "BAAI/bge-small-zh-v1.5"
   index_path: "data/rag_index"
   top_k: 3

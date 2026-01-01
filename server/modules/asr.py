@@ -50,12 +50,22 @@ class ASRModule:
         
         logger.info(f"Loading SenseVoice model on {self.device}")
         try:
+            import os
+            # 优先使用本地模型路径
+            local_model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'iic', 'SenseVoiceSmall')
+            if os.path.exists(local_model_path):
+                model_path = local_model_path
+                logger.info(f"Using local model: {model_path}")
+            else:
+                # 回退到ModelScope下载
+                model_path = "iic/SenseVoiceSmall"
+                logger.info(f"Local model not found, will download from ModelScope")
+            
             # 加载SenseVoice模型
-            # 模型ID: iic/SenseVoiceSmall - 支持50+语言的多语言ASR
             self.model = AutoModel(
-                model="iic/SenseVoiceSmall",
+                model=model_path,
                 device=self.device,
-                disable_update=True,  # 禁用更新检查，使用本地模型
+                disable_update=True,  # 禁用更新检查
             )
             logger.info("SenseVoice model loaded successfully")
         except Exception as e:

@@ -37,6 +37,7 @@ os.makedirs(MODEL_CACHE_DIR, exist_ok=True)
 os.environ['MODELSCOPE_CACHE'] = MODEL_CACHE_DIR
 os.environ['HF_HOME'] = MODEL_CACHE_DIR
 os.environ['TRANSFORMERS_CACHE'] = MODEL_CACHE_DIR
+os.environ['SENTENCE_TRANSFORMERS_HOME'] = MODEL_CACHE_DIR
 # 设置 HuggingFace 镜像源（如果未设置）
 if 'HF_ENDPOINT' not in os.environ:
     os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
