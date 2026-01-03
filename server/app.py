@@ -610,13 +610,9 @@ def dialogue_endpoint():
             system_prompt=system_prompt
         )
         
+        # 更新 RAG 状态等信息
         result['mode'] = mode
         result['mode_switched'] = False
-        
-        # 广播消息到网页（用于客户端同步显示）
-        response_text = result.get('response', result.get('text', ''))
-        broadcast_message('user_message', {'text': query, 'mode': mode, 'source': 'client'})
-        broadcast_message('assistant_message', {'text': response_text, 'mode': mode})
         
         return jsonify(result)
         

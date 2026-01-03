@@ -37,9 +37,12 @@ class MedicalDictionary:
         """
         if dict_dir is None:
             # 默认路径：server/data/dict
-            dict_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'dict')
+            # 使用 resolve() 获取绝对路径，确保在不同启动方式下都能找到
+            self.dict_dir = Path(__file__).resolve().parent.parent.parent / 'data' / 'dict'
+        else:
+            self.dict_dir = Path(dict_dir)
         
-        self.dict_dir = Path(dict_dir)
+        print(f"📊 [词典加载] 正在从目录读取: {self.dict_dir}", flush=True)
         
         # 各类实体词典
         self.diseases: Set[str] = set()
