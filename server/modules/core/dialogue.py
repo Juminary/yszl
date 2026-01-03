@@ -282,7 +282,8 @@ class DialogueModule:
                 "query": query,
                 "session_id": session_id,
                 "history": list(conversation["history"]),
-                "rag_used": rag_context is not None
+                "rag_used": rag_context is not None,
+                "rag_context": rag_context
             }
             
         except Exception as e:

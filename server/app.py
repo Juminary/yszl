@@ -577,14 +577,14 @@ def dialogue_endpoint():
         
         # 根据模式选择不同的系统提示词
         mode_prompts = {
-            'patient': """你是一个智能医疗导诊助手，帮助患者了解症状并建议应该挂什么科室。
-你的职责是，根据患者描述的症状，分析可能的疾病方向，建议患者应该去哪个科室就诊。
+            'patient': """你是一个智能医疗助手，帮助患者分析症状、给出初步的健康生活建议，并建议应该挂什么科室。
+你的职责是，根据患者描述的症状，分析可能的健康问题，提供初步的日常护理建议（如休息、饮食、补水等），并建议患者应该去哪个科室就诊。
 你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求，
 只用纯中文回答，禁止英文和数字。
 只用中文逗号和句号，禁止其他标点。
 禁止使用列表和编号格式，必须写成连贯的一段话。
-态度温和友好，像一个耐心的导诊护士。
-注意，你只提供导诊建议，不能给出诊断或治疗方案。""",
+态度温和友好，像一个耐心的专业护士。
+在提供建议的同时，必须告知患者这不替代医生面诊，必要时及时就医。""",
 
             'doctor': """你是医生的AI诊断辅助助手，帮助医生分析病情、提供鉴别诊断和治疗方案建议。
 你应该使用专业的医学术语，提供基于循证医学的建议。
@@ -821,7 +821,12 @@ def chat_endpoint():
         
         # 广播消息到网页
         broadcast_message('user_message', {'text': text, 'mode': 'voice', 'source': 'client'})
-        broadcast_message('assistant_message', {'text': response_text, 'mode': 'voice'})
+        broadcast_message('assistant_message', {
+            'text': response_text, 
+            'mode': 'voice',
+            'rag_used': dialogue_result.get('rag_used', False),
+            'rag_context': dialogue_result.get('rag_context', '')
+        })
         
         # 返回完整结果
         result = {
@@ -851,6 +856,7 @@ def chat_endpoint():
             response.headers['X-Emotion'] = emotion_result.get('emotion', '')
             response.headers['X-Speaker'] = speaker_result.get('speaker_id', '')
             response.headers['X-RAG-Used'] = str(dialogue_result.get('rag_used', False))
+            response.headers['X-RAG-Context'] = quote(dialogue_result.get('rag_context', ''), safe='')
             response.headers['X-Mode-Switched'] = 'false'
             return response
         else:

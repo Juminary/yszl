@@ -249,7 +249,8 @@ async function sendAudioToServer(audioBlob) {
                 text: response.headers.get('X-Response-Text') || '',
                 asr_text: response.headers.get('X-ASR-Text') || '',
                 emotion: response.headers.get('X-Emotion') || '',
-                speaker: response.headers.get('X-Speaker') || ''
+                speaker: response.headers.get('X-Speaker') || '',
+                rag_context: decodeURIComponent(response.headers.get('X-RAG-Context') || '')
             };
         }
 
