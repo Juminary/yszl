@@ -270,7 +270,12 @@ class RAGModule:
     
     def build_context(self, query: str, top_k: int = None) -> str:
         """
-        构建 RAG 上下文（向量检索 + 知识图谱）
+        构建 RAG 上下文（图谱优先 + 向量检索兜底）
+        
+        策略：
+        1. 优先咨询医学知识图谱 (Smart Query)
+        2. 如果图谱查到结论，直接返回，跳过向量检索
+        3. 如果图谱无结果，再进行向量库检索 (FAISS)
         
         Args:
             query: 用户查询
@@ -279,23 +284,27 @@ class RAGModule:
         Returns:
             格式化的上下文字符串
         """
-        context_parts = []
-        
-        # 1. 向量检索
-        retrieved = self.retrieve(query, top_k)
-        if retrieved:
-            context_parts.append("【向量检索结果】")
-            for i, doc in enumerate(retrieved[:3], 1):
-                context_parts.append(f"参考{i}：{doc['content']}")
-        
-        # 2. 知识图谱补充
+        # 1. 优先使用知识图谱支持的智能问答
         if self.knowledge_graph and self.knowledge_graph.enabled:
             kg_context = self.knowledge_graph.build_context_from_query(query)
             if kg_context:
-                context_parts.append("\n【知识图谱补充】")
-                context_parts.append(kg_context)
+                # 记录日志，明确显示图谱命中
+                print(f"\n[RAG 决策] ✅ 知识图谱已命中，跳过向量检索", flush=True)
+                return f"【医学知识库】\n{kg_context}"
         
-        return "\n".join(context_parts)
+        # 2. 知识图谱无结果，使用向量检索作为兜底
+        context_parts = []
+        retrieved = self.retrieve(query, top_k)
+        
+        if retrieved:
+            context_parts.append("【参考资料】")
+            for i, doc in enumerate(retrieved[:3], 1):
+                context_parts.append(f"资料{i}：{doc['content']}")
+            
+            print(f"[RAG 决策] ℹ 知识图谱无结果，开启向量检索 (命中 {len(retrieved)} 条)", flush=True)
+            return "\n".join(context_parts)
+        
+        return ""
     
     def get_info(self) -> Dict:
         """获取模块信息"""

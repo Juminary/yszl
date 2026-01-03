@@ -10,15 +10,23 @@ from typing import Dict, List, Optional, Any
 logger = logging.getLogger(__name__)
 
 # 导入新增模块
-# 导入新增模块
 try:
-    from modules.medical.medical_dict import MedicalDictionary
-    from modules.medical.intent_classifier import IntentClassifier
+    from ..medical.medical_dict import MedicalDictionary
+    from ..medical.intent_classifier import IntentClassifier
     from .cypher_generator import CypherGenerator
     MODULES_AVAILABLE = True
-except ImportError as e:
+except (ImportError, ValueError) as e:
+    # 捕获 ValueError 以处理可能的相对导入错误
     logger.warning(f"Failed to import NLU modules: {e}")
-    MODULES_AVAILABLE = False
+    # 尝试备选导入方式 (绝对路径)
+    try:
+        from modules.medical.medical_dict import MedicalDictionary
+        from modules.medical.intent_classifier import IntentClassifier
+        from .cypher_generator import CypherGenerator
+        MODULES_AVAILABLE = True
+    except ImportError:
+        MODULES_AVAILABLE = False
+        logger.warning("NLU modules absolutely not available, using legacy mode")
 
 
 class KnowledgeGraphModule:
@@ -170,7 +178,14 @@ class KnowledgeGraphModule:
         if self.medical_dict:
             entities = self.medical_dict.extract_entities(query)
         else:
-            entities = self._extract_entities_legacy(query)
+            entities = {
+                'disease': [],
+                'symptom': [],
+                'drug': [],
+                'check': [],
+                'food': [],
+                'department': []
+            }
         
         # 2. 意图分类
         if self.intent_classifier:
@@ -185,7 +200,7 @@ class KnowledgeGraphModule:
         if self.cypher_generator and intent != 'general_chat':
             cypher_queries = self.cypher_generator.generate(intent, entities)
         else:
-            cypher_queries = self._generate_legacy_queries(query, entities)
+            cypher_queries = []
         
         # 4. 执行查询
         all_results = []
@@ -209,52 +224,7 @@ class KnowledgeGraphModule:
             'context': context
         }
     
-    def _extract_entities_legacy(self, query: str) -> Dict[str, List[str]]:
-        """旧版实体提取（降级方案）"""
-        entities = {
-            'disease': [],
-            'symptom': [],
-            'drug': [],
-            'check': [],
-            'food': [],
-            'department': []
-        }
-        
-        # 简单的关键词匹配
-        symptom_keywords = ['疼', '痛', '晕', '热', '烧', '咳', '呕', '吐', 
-                           '麻', '痒', '肿', '红', '胀', '闷', '头疼', '发烧',
-                           '咳嗽', '流鼻涕', '恶心', '腹泻']
-        
-        for kw in symptom_keywords:
-            if kw in query:
-                entities['symptom'].append(kw)
-        
-        return entities
-    
-    def _generate_legacy_queries(self, query: str, entities: Dict) -> List[str]:
-        """旧版查询生成（降级方案）"""
-        queries = []
-        
-        # 根据症状查疾病
-        for symptom in entities.get('symptom', []):
-            queries.append(f"""
-                MATCH (d:Disease)-[r:has_symptom]->(s:Symptom)
-                WHERE s.name CONTAINS '{symptom}'
-                RETURN d.name as disease, s.name as symptom,
-                       d.cause as cause, d.cure_way as cure_way
-                LIMIT 5
-            """)
-        
-        # 根据疾病查信息
-        for disease in entities.get('disease', []):
-            queries.append(f"""
-                MATCH (d:Disease)
-                WHERE d.name = '{disease}'
-                RETURN d.name as disease, d.desc as description,
-                       d.cause as cause, d.cure_way as cure_methods
-            """)
-        
-        return queries
+    # ==================== 工具方法 ====================
     
     def _build_context_from_results(self, intent: str, entities: Dict, results: List[Dict]) -> str:
         """根据查询结果构建 LLM 上下文"""
@@ -583,92 +553,8 @@ class KnowledgeGraphModule:
         # 使用新的智能查询
         if self.medical_dict and self.intent_classifier:
             result = self.smart_query(query)
-            if result.get('context'):
-                return result['context']
-            else:
-                print("[知识图谱] ✗ 智能查询无结果，尝试旧版逻辑", flush=True)
+            return result.get('context', "")
         
-        # 降级到旧版逻辑
-        return self._build_context_legacy(query)
-    
-    def _build_context_legacy(self, query: str) -> str:
-        """旧版上下文构建（保持兼容）"""
-        print("\n" + "-"*50, flush=True)
-        print("📊 [知识图谱] 使用旧版查询逻辑", flush=True)
-        print(f"   问题: {query[:40]}...", flush=True)
-        
-        context_parts = []
-        
-        # 尝试从查询中提取症状关键词
-        symptom_keywords = ['疼', '痛', '晕', '热', '烧', '咳', '呕', '吐', 
-                           '麻', '痒', '肿', '红', '软', '硬', '胀', '闷']
-        
-        # 检查是否包含症状描述
-        has_symptom = any(kw in query for kw in symptom_keywords)
-        
-        if has_symptom:
-            # 尝试症状查询
-            for kw in symptom_keywords:
-                if kw in query:
-                    result = self.search_by_symptom(kw)
-                    if result and result.get('possible_diseases'):
-                        diseases = result['possible_diseases'][:3]
-                        context_parts.append(
-                            f"【知识图谱-症状关联】症状'{kw}'可能相关的疾病：{', '.join(diseases)}"
-                        )
-                        print(f"   匹配症状: {kw} -> 疾病: {', '.join(diseases)}", flush=True)
-                        
-                        # 对第一个疾病获取详细信息
-                        if diseases:
-                            detail = self.search_by_disease(diseases[0])
-                            if detail:
-                                if detail.get('symptoms'):
-                                    context_parts.append(
-                                        f"【{diseases[0]}的症状】{', '.join(detail['symptoms'][:5])}"
-                                    )
-                                if detail.get('drugs'):
-                                    context_parts.append(
-                                        f"【{diseases[0]}常用药物】{', '.join(detail['drugs'][:5])}"
-                                    )
-                                if detail.get('cure_way'):
-                                    ways = detail['cure_way'] if isinstance(detail['cure_way'], list) else [detail['cure_way']]
-                                    context_parts.append(
-                                        f"【{diseases[0]}治疗方式】{', '.join(ways[:3])}"
-                                    )
-                        break
-        
-        # 检查是否询问特定疾病
-        disease_markers = ['什么是', '怎么治', '如何治疗', '吃什么药', '做什么检查']
-        for marker in disease_markers:
-            if marker in query:
-                # 提取可能的疾病名
-                words = query.replace(marker, ' ').split()
-                for word in words:
-                    if len(word) >= 2:
-                        detail = self.search_by_disease(word)
-                        if detail and detail.get('disease'):
-                            print(f"   匹配疾病: {detail['disease']}", flush=True)
-                            context_parts.append(
-                                f"【知识图谱-{detail['disease']}】"
-                            )
-                            if detail.get('description'):
-                                context_parts.append(f"简介：{detail['description'][:100]}")
-                            if detail.get('symptoms'):
-                                context_parts.append(f"主要症状：{', '.join(detail['symptoms'][:5])}")
-                            if detail.get('drugs'):
-                                context_parts.append(f"常用药物：{', '.join(detail['drugs'][:5])}")
-                            if detail.get('checks'):
-                                context_parts.append(f"检查项目：{', '.join(detail['checks'][:3])}")
-                            break
-                break
-        
-        if context_parts:
-            print(f"   结果: {len(context_parts)} 条信息", flush=True)
-            print("-"*50 + "\n", flush=True)
-            return "\n".join(context_parts)
-        
-        print("   结果: (无匹配)", flush=True)
-        print("-"*50 + "\n", flush=True)
         return ""
     
     def get_info(self) -> Dict:
