@@ -13,8 +13,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# CosyVoice 库路径（已集成到 libs/cosyvoice/）
-COSYVOICE_LIB_PATH = os.path.join(os.path.dirname(__file__), '..', 'libs', 'cosyvoice')
+# CosyVoice 库路径（从 core/ 往上走: core/ -> modules/ -> libs/cosyvoice/）
+COSYVOICE_LIB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'libs', 'cosyvoice')
 if os.path.exists(COSYVOICE_LIB_PATH):
     # 先添加 Matcha-TTS（必须在 CosyVoice 之前）
     third_party_path = os.path.join(COSYVOICE_LIB_PATH, 'third_party', 'Matcha-TTS')
@@ -51,8 +51,8 @@ class TTSModule:
         self.model = None
         self.sample_rate = 22050
         
-        # CosyVoice 模型路径（已移到统一的 models/tts/ 目录）
-        models_parent_dir = os.path.join(os.path.dirname(__file__), '..', 'models', 'tts')
+        # CosyVoice 模型路径（从 core/ 往上走: core/ -> modules/ -> server/）
+        models_parent_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'models', 'tts')
         model_dir = os.path.join(models_parent_dir, 'CosyVoice-300M-Instruct')
         
         # 如果模型不存在，尝试从 ModelScope 下载
@@ -120,7 +120,7 @@ class TTSModule:
             
             # 生成输出路径
             if output_path is None:
-                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                 temp_dir = Path(base_dir) / "temp"
                 temp_dir.mkdir(exist_ok=True)
                 output_path = str(temp_dir / f"tts_{abs(hash(text))}.wav")
@@ -319,47 +319,80 @@ class TTSModule:
 
 
 class SimpleTTSModule:
-    """简化的TTS模块（使用macOS say命令作为后备）"""
+    """简化的TTS模块（跨平台支持）
+    
+    优先级：
+    1. edge-tts (Microsoft Edge TTS API, 跨平台, 高质量, 需联网)
+    2. macOS say (仅macOS, 本地离线)
+    """
     
     def __init__(self):
         """初始化简化TTS模块"""
-        self.use_macos_say = False
-        self.engine = None
+        self.tts_method = None
         
-        # 优先尝试 macOS say 命令
+        # 1. 优先尝试 edge-tts (跨平台，高质量)
+        try:
+            import edge_tts
+            self.tts_method = "edge_tts"
+            self.voice = "zh-CN-XiaoxiaoNeural"  # 中文女声
+            logger.info(f"Using edge-tts for TTS (voice: {self.voice})")
+            return
+        except ImportError:
+            logger.info("edge-tts not available, trying alternatives...")
+        
+        # 2. macOS say 命令作为备选
         import platform
         if platform.system() == "Darwin":
-            self.use_macos_say = True
+            self.tts_method = "macos_say"
             logger.info("Using macOS say command for TTS")
             return
         
-        # 尝试 pyttsx3
-        try:
-            import pyttsx3
-            self.engine = pyttsx3.init()
-            self.engine.setProperty('rate', 150)
-            self.engine.setProperty('volume', 0.9)
-            logger.info("Using pyttsx3 for TTS")
-        except Exception as e:
-            logger.warning(f"pyttsx3 not available: {e}")
+        logger.warning("No TTS engine available! Install edge-tts: pip install edge-tts")
     
     def synthesize(self, text: str, output_path: str = None, **kwargs) -> Dict:
         """合成语音"""
         try:
+            # 生成输出路径
             if output_path is None:
-                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                 temp_dir = Path(base_dir) / "temp"
                 temp_dir.mkdir(exist_ok=True)
-                output_path = str(temp_dir / f"tts_{abs(hash(text))}.aiff")
+                output_path = str(temp_dir / f"tts_{abs(hash(text))}.mp3")
             
-            if self.use_macos_say:
+            # 1. edge-tts (推荐)
+            if self.tts_method == "edge_tts":
+                import asyncio
+                import edge_tts
+                
+                async def _synthesize():
+                    communicate = edge_tts.Communicate(text, self.voice)
+                    mp3_path = output_path.replace('.wav', '.mp3').replace('.aiff', '.mp3')
+                    await communicate.save(mp3_path)
+                    return mp3_path
+                
+                # 运行异步任务
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                mp3_path = loop.run_until_complete(_synthesize())
+                loop.close()
+                
+                if os.path.exists(mp3_path):
+                    return {
+                        "audio": None,
+                        "sample_rate": 24000,
+                        "output_path": mp3_path,
+                        "text": text,
+                        "method": "edge_tts"
+                    }
+            
+            # 2. macOS say
+            elif self.tts_method == "macos_say":
                 import subprocess
-                aiff_path = output_path.replace('.wav', '.aiff')
+                aiff_path = output_path.replace('.mp3', '.aiff').replace('.wav', '.aiff')
                 result = subprocess.run(
                     ['say', '-v', 'Tingting', '-o', aiff_path, text],
                     capture_output=True, text=True, timeout=30
                 )
-                
                 if result.returncode == 0 and os.path.exists(aiff_path):
                     return {
                         "audio": None,
@@ -369,29 +402,25 @@ class SimpleTTSModule:
                         "method": "macos_say"
                     }
             
-            if self.engine:
-                wav_path = output_path.replace('.aiff', '.wav')
-                self.engine.save_to_file(text, wav_path)
-                self.engine.runAndWait()
-                return {
-                    "audio": None,
-                    "sample_rate": 22050,
-                    "output_path": wav_path,
-                    "text": text,
-                    "method": "pyttsx3"
-                }
-            
             return {"audio": None, "sample_rate": 0, "output_path": None, "text": text, "error": "No TTS engine"}
             
         except Exception as e:
             logger.error(f"Simple TTS failed: {e}")
+            import traceback
+            traceback.print_exc()
             return {"audio": None, "sample_rate": 0, "output_path": None, "text": text, "error": str(e)}
     
     def synthesize_with_emotion(self, text: str, emotion: str, output_path: str = None) -> Dict:
         return self.synthesize(text, output_path)
     
     def get_model_info(self) -> Dict:
-        return {"model_type": "SimpleTTS", "macos_say": self.use_macos_say, "pyttsx3": self.engine is not None}
+        return {
+            "model_type": "SimpleTTS",
+            "method": self.tts_method,
+            "cross_platform": True,
+            "available_methods": ["edge_tts", "pyttsx3", "macos_say"]
+        }
+
 
 
 if __name__ == "__main__":

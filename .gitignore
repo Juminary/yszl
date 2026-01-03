@@ -55,6 +55,9 @@ server/models/cache/*
 server/data/rag_index/*
 !server/data/rag_index/.gitkeep
 
+server/data/consultations/*
+!server/data/consultations/.gitkeep
+
 # 临时音频文件
 # =============================================
 server/temp/*.wav
