@@ -10,14 +10,15 @@ from typing import Dict, List, Optional, Any
 logger = logging.getLogger(__name__)
 
 # 导入新增模块
+# 导入新增模块
 try:
-    from .medical_dict import MedicalDictionary
-    from .intent_classifier import IntentClassifier
+    from modules.medical.medical_dict import MedicalDictionary
+    from modules.medical.intent_classifier import IntentClassifier
     from .cypher_generator import CypherGenerator
     MODULES_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    logger.warning(f"Failed to import NLU modules: {e}")
     MODULES_AVAILABLE = False
-    logger.warning("NLU modules not available, using legacy mode")
 
 
 class KnowledgeGraphModule:
