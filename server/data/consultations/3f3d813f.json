@@ -1,0 +1,25 @@
+{
+  "session_id": "3f3d813f",
+  "start_time": "2026-01-03T19:08:42.783324",
+  "end_time": "2026-01-03T19:09:55.832567",
+  "status": "completed",
+  "patient_info": {},
+  "speakers": {},
+  "utterances": [],
+  "metadata": {
+    "created_at": "2026-01-03T19:08:42.783324",
+    "consultation_type": "outpatient",
+    "department": null,
+    "chief_complaint": null
+  },
+  "statistics": {
+    "session_id": "3f3d813f",
+    "status": "completed",
+    "duration": 73.049243,
+    "utterance_count": 0,
+    "speaker_count": 0,
+    "utterances_by_role": {},
+    "entity_count": 0,
+    "audio_duration": 0.0
+  }
+}

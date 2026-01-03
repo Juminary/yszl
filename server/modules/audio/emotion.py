@@ -68,7 +68,7 @@ class EmotionModule:
         # 加载SenseVoice模型 - 优先使用本地，不存在则下载到 server/models
         from modelscope import snapshot_download
         
-        models_dir = Path(__file__).parent.parent / "models" / "asr"
+        models_dir = Path(__file__).parent.parent.parent / "models" / "asr"
         model_path = models_dir / "SenseVoiceSmall"
         
         if model_path.exists():

@@ -66,7 +66,7 @@ class RAGModule:
                 try:
                     from modelscope import snapshot_download
                     # 从 ModelScope 下载 bge 模型
-                    models_dir = Path(__file__).parent.parent / "models" / "embedding"
+                    models_dir = Path(__file__).parent.parent.parent / "models" / "embedding"
                     models_dir.mkdir(parents=True, exist_ok=True)
                     ms_model_name = "AI-ModelScope/bge-small-zh-v1.5"
                     logger.info(f"Downloading {ms_model_name} from ModelScope...")

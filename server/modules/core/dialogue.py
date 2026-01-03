@@ -70,7 +70,7 @@ class DialogueModule:
                 try:
                     from modelscope import snapshot_download
                     # 从 ModelScope 下载模型
-                    models_dir = Path(__file__).parent.parent / "models" / "dialogue"
+                    models_dir = Path(__file__).parent.parent.parent / "models" / "dialogue"
                     models_dir.mkdir(parents=True, exist_ok=True)
                     logger.info(f"Downloading {model_name} from ModelScope...")
                     model_path = snapshot_download(model_name, cache_dir=str(models_dir))

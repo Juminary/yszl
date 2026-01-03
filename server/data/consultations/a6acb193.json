@@ -1,0 +1,96 @@
+{
+  "session_id": "a6acb193",
+  "start_time": "2026-01-03T19:15:52.657955",
+  "end_time": "2026-01-03T19:17:38.694529",
+  "status": "completed",
+  "patient_info": {},
+  "speakers": {},
+  "utterances": [
+    {
+      "id": "utt_0000",
+      "text": "我胸口压榨性疼痛，喘不上气，感觉要死了",
+      "speaker_id": "unknown",
+      "speaker_role": "patient",
+      "timestamp": 17.330666,
+      "duration": 0.0,
+      "audio_offset": null,
+      "entities": [
+        {
+          "text": "疼痛",
+          "type": "symptom",
+          "normalized": "疼痛",
+          "attributes": {
+            "body_part": "胸口"
+          },
+          "source_offset": [
+            6,
+            8
+          ],
+          "confidence": 0.9,
+          "ontology_code": null,
+          "speaker_role": "patient"
+        },
+        {
+          "text": "胸口",
+          "type": "body_part",
+          "normalized": "胸口",
+          "attributes": {},
+          "source_offset": [
+            1,
+            3
+          ],
+          "confidence": 0.9,
+          "ontology_code": null,
+          "speaker_role": "patient"
+        }
+      ],
+      "emotion": null,
+      "confidence": 1.0
+    },
+    {
+      "id": "utt_0001",
+      "text": "根据您描述的症状，这可能是心脏病发作的前兆。请尽快前往急诊室，并告知医护人员您的症状。同时，请注意休息，避免过度劳累。",
+      "speaker_id": "unknown",
+      "speaker_role": "doctor",
+      "timestamp": 19.628399,
+      "duration": 0.0,
+      "audio_offset": null,
+      "entities": [
+        {
+          "text": "心脏",
+          "type": "body_part",
+          "normalized": "心脏",
+          "attributes": {},
+          "source_offset": [
+            13,
+            15
+          ],
+          "confidence": 0.9,
+          "ontology_code": null,
+          "speaker_role": "doctor"
+        }
+      ],
+      "emotion": null,
+      "confidence": 1.0
+    }
+  ],
+  "metadata": {
+    "created_at": "2026-01-03T19:15:52.657955",
+    "consultation_type": "outpatient",
+    "department": null,
+    "chief_complaint": null
+  },
+  "statistics": {
+    "session_id": "a6acb193",
+    "status": "completed",
+    "duration": 106.036574,
+    "utterance_count": 2,
+    "speaker_count": 0,
+    "utterances_by_role": {
+      "patient": 1,
+      "doctor": 1
+    },
+    "entity_count": 3,
+    "audio_duration": 19.628399
+  }
+}

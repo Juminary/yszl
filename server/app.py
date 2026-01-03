@@ -24,7 +24,7 @@ for logger_name in ['modelscope', 'funasr', 'transformers', 'torch',
 # 抑制root logger的WARNING
 logging.getLogger().setLevel(logging.ERROR)
 
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 import yaml
 from pathlib import Path
@@ -42,16 +42,29 @@ os.environ['SENTENCE_TRANSFORMERS_HOME'] = MODEL_CACHE_DIR
 if 'HF_ENDPOINT' not in os.environ:
     os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 
-# 导入各个模块
-from modules.asr import ASRModule
-from modules.emotion import EmotionModule
-from modules.speaker import SpeakerModule
-from modules.dialogue import DialogueModule, SimplDialogueModule
-from modules.tts import TTSModule, SimpleTTSModule
-from modules.rag import RAGModule, SimpleRAGModule
-from modules.triage import TriageModule
-from modules.diagnosis_assistant import DiagnosisAssistant
-from modules.medication import MedicationModule
+# 导入各个模块 - 按分类组织
+# Core modules
+from modules.core.asr import ASRModule
+from modules.core.dialogue import DialogueModule, SimplDialogueModule
+from modules.core.tts import TTSModule, SimpleTTSModule
+from modules.core.rag import RAGModule, SimpleRAGModule
+
+# Audio modules  
+from modules.audio.emotion import EmotionModule
+from modules.audio.speaker import SpeakerModule
+
+# Medical modules
+from modules.medical.triage import TriageModule
+from modules.medical.diagnosis_assistant import DiagnosisAssistant
+from modules.medical.medication import MedicationModule
+
+# ACI modules
+from modules.aci.consultation_session import ConsultationSession
+from modules.aci.clinical_entity_extractor import ClinicalEntityExtractor
+from modules.aci.soap_generator import SOAPGenerator
+from modules.aci.hallucination_detector import HallucinationDetector
+from modules.aci.emergency_detector import EmergencyDetector
+
 
 # 配置日志
 logging.basicConfig(
@@ -64,8 +77,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 创建Flask应用
-app = Flask(__name__)
+# 创建Flask应用（配置静态文件服务）
+app = Flask(__name__, static_folder='static', static_url_path='/static')
 CORS(app)
 
 # 全局变量存储模块实例
@@ -180,7 +193,7 @@ def initialize_modules():
             kg_config = config.get('knowledge_graph', {})
             if kg_config.get('enabled', False):
                 try:
-                    from modules.knowledge_graph import KnowledgeGraphModule
+                    from modules.knowledge.knowledge_graph import KnowledgeGraphModule
                     
                     print("\n" + "-"*50, flush=True)
                     print("🔗 [知识图谱] 正在初始化...", flush=True)
@@ -307,6 +320,14 @@ def initialize_modules():
         modules['medication'] = None
     
     logger.info("All modules initialized successfully")
+
+
+# ============= Web界面路由 =============
+
+@app.route('/')
+def index():
+    """返回Web界面首页"""
+    return send_from_directory('static', 'index.html')
 
 
 # ============= API路由 =============
@@ -461,14 +482,40 @@ def dialogue_endpoint():
         query = data['query']
         session_id = data.get('session_id', 'default')
         reset = data.get('reset', False)
+        mode = data.get('mode', 'patient')  # patient | doctor
+        
+        # 根据模式选择不同的系统提示词
+        mode_prompts = {
+            'patient': """你是一个智能医疗导诊助手，帮助患者了解症状并建议应该挂什么科室。
+你的职责是，根据患者描述的症状，分析可能的疾病方向，建议患者应该去哪个科室就诊。
+你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求，
+只用纯中文回答，禁止英文和数字。
+只用中文逗号和句号，禁止其他标点。
+禁止使用列表和编号格式，必须写成连贯的一段话。
+态度温和友好，像一个耐心的导诊护士。
+注意，你只提供导诊建议，不能给出诊断或治疗方案。""",
+
+            'doctor': """你是医生的AI诊断辅助助手，帮助医生分析病情、提供鉴别诊断和治疗方案建议。
+你应该使用专业的医学术语，提供基于循证医学的建议。
+你的职责包括，分析患者症状提供鉴别诊断，建议必要的检查项目，提供治疗方案参考，提示潜在的风险和禁忌症。
+你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求，
+只用纯中文回答，禁止英文和数字。
+只用中文逗号和句号，禁止其他标点。
+禁止使用列表和编号格式，必须写成连贯的一段话。
+态度专业严谨，像一个经验丰富的主治医师在与同事讨论病例。"""
+        }
+        
+        system_prompt = mode_prompts.get(mode, mode_prompts['patient'])
         
         # 执行对话
         result = modules['dialogue'].chat(
             query=query,
-            session_id=session_id,
-            reset=reset
+            session_id=f"{session_id}_{mode}",  # 不同模式使用不同的会话历史
+            reset=reset,
+            system_prompt=system_prompt
         )
         
+        result['mode'] = mode
         return jsonify(result)
         
     except Exception as e:
@@ -926,9 +973,319 @@ def list_departments():
         return jsonify({"error": str(e)}), 500
 
 
+# ============= 临床智能 (ACI) API =============
+
+# 导入 ACI 模块
+try:
+    from modules.aci.consultation_session import ConsultationSession, ConsultationManager
+    from modules.aci.speaker_diarization import SpeakerDiarizer
+    from modules.aci.clinical_entity_extractor import ClinicalEntityExtractor
+    from modules.aci.soap_generator import SOAPGenerator
+    from modules.aci.hallucination_detector import HallucinationDetector
+    from modules.aci.emergency_detector import EmergencyDetector
+    ACI_AVAILABLE = True
+    logger.info("ACI modules loaded successfully")
+except ImportError as e:
+    ACI_AVAILABLE = False
+    logger.warning(f"ACI modules not available: {e}")
+
+# ACI 全局实例
+consultation_manager = None
+entity_extractor = None
+soap_generator = None
+hallucination_detector = None
+emergency_detector = None
+speaker_diarizer = None
+
+
+def initialize_aci_modules():
+    """初始化 ACI 模块"""
+    global consultation_manager, entity_extractor, soap_generator
+    global hallucination_detector, emergency_detector, speaker_diarizer
+    
+    if not ACI_AVAILABLE:
+        logger.warning("ACI modules not available, skipping initialization")
+        return
+    
+    try:
+        consultation_manager = ConsultationManager()
+        entity_extractor = ClinicalEntityExtractor(
+            knowledge_graph=modules.get('knowledge_graph'),
+            dialogue_module=modules.get('dialogue')
+        )
+        hallucination_detector = HallucinationDetector(
+            dialogue_module=modules.get('dialogue')
+        )
+        soap_generator = SOAPGenerator(
+            entity_extractor=entity_extractor,
+            dialogue_module=modules.get('dialogue'),
+            hallucination_detector=hallucination_detector
+        )
+        emergency_detector = EmergencyDetector()
+        speaker_diarizer = SpeakerDiarizer(
+            speaker_module=modules.get('speaker')
+        )
+        logger.info("ACI modules initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize ACI modules: {e}")
+
+
+@app.route('/consultation/start', methods=['POST'])
+def start_consultation():
+    """开始新的会诊会话"""
+    if not ACI_AVAILABLE or not consultation_manager:
+        return jsonify({"error": "ACI 模块未初始化"}), 500
+    
+    try:
+        data = request.json or {}
+        patient_info = data.get('patient_info', {})
+        
+        session = consultation_manager.create_session(patient_info=patient_info)
+        
+        return jsonify({
+            "status": "success",
+            "session_id": session.session_id,
+            "message": "会诊会话已创建"
+        })
+        
+    except Exception as e:
+        logger.error(f"Start consultation error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/consultation/<session_id>/register-speaker', methods=['POST'])
+def register_consultation_speaker(session_id):
+    """注册会诊说话人"""
+    if not consultation_manager:
+        return jsonify({"error": "ACI 模块未初始化"}), 500
+    
+    try:
+        session = consultation_manager.get_session(session_id)
+        if not session:
+            return jsonify({"error": "会话不存在"}), 404
+        
+        data = request.json
+        speaker_id = data.get('speaker_id')
+        role = data.get('role')  # doctor, patient, family
+        name = data.get('name')
+        
+        if not speaker_id or not role:
+            return jsonify({"error": "需要 speaker_id 和 role"}), 400
+        
+        session.register_speaker(speaker_id, role, name)
+        
+        if speaker_diarizer:
+            speaker_diarizer.register_role(speaker_id, role, name)
+        
+        return jsonify({
+            "status": "success",
+            "message": f"说话人 {speaker_id} 已注册为 {role}"
+        })
+        
+    except Exception as e:
+        logger.error(f"Register speaker error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/consultation/<session_id>/utterance', methods=['POST'])
+def add_consultation_utterance(session_id):
+    """添加对话记录"""
+    if not consultation_manager:
+        return jsonify({"error": "ACI 模块未初始化"}), 500
+    
+    try:
+        session = consultation_manager.get_session(session_id)
+        if not session:
+            return jsonify({"error": "会话不存在"}), 404
+        
+        # 支持 JSON 或 form-data
+        if request.content_type and 'multipart/form-data' in request.content_type:
+            text = request.form.get('text', '')
+            speaker_id = request.form.get('speaker_id')
+            speaker_role = request.form.get('speaker_role')
+            audio_file = request.files.get('audio')
+            audio_segment = audio_file.read() if audio_file else None
+        else:
+            data = request.json or {}
+            text = data.get('text', '')
+            speaker_id = data.get('speaker_id')
+            speaker_role = data.get('speaker_role')
+            audio_segment = None
+        
+        # 如果没有角色，尝试推断
+        if not speaker_role and speaker_diarizer:
+            speaker_role, _ = speaker_diarizer.infer_role_from_content(text)
+        
+        # 提取实体
+        entities = []
+        if entity_extractor:
+            extracted = entity_extractor.extract_entities(text, speaker_role)
+            entities = [e.to_dict() for e in extracted]
+        
+        # 急救检测
+        emergency_alert = None
+        if emergency_detector:
+            alert = emergency_detector.assess_risk(text)
+            if alert.level in ["critical", "urgent"]:
+                emergency_alert = alert.to_dict()
+        
+        # 添加发言
+        utterance = session.add_utterance(
+            text=text,
+            speaker_id=speaker_id,
+            speaker_role=speaker_role,
+            audio_segment=audio_segment,
+            entities=entities
+        )
+        
+        response = {
+            "status": "success",
+            "utterance_id": utterance.id,
+            "speaker_role": utterance.speaker_role,
+            "entities": entities
+        }
+        
+        if emergency_alert:
+            response["emergency_alert"] = emergency_alert
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"Add utterance error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/consultation/<session_id>/soap', methods=['GET'])
+def get_consultation_soap(session_id):
+    """获取 SOAP 病历"""
+    if not consultation_manager or not soap_generator:
+        return jsonify({"error": "ACI 模块未初始化"}), 500
+    
+    try:
+        session = consultation_manager.get_session(session_id)
+        if not session:
+            return jsonify({"error": "会话不存在"}), 404
+        
+        # 生成 SOAP
+        soap = soap_generator.generate_soap(session)
+        
+        # 返回格式
+        output_format = request.args.get('format', 'json')
+        
+        if output_format == 'markdown':
+            return soap.to_markdown(), 200, {'Content-Type': 'text/markdown; charset=utf-8'}
+        else:
+            return jsonify({
+                "status": "success",
+                "soap": soap.to_dict()
+            })
+        
+    except Exception as e:
+        logger.error(f"Get SOAP error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/consultation/<session_id>/preview', methods=['GET'])
+def get_soap_preview(session_id):
+    """获取 SOAP 实时预览（轻量级）"""
+    if not consultation_manager or not soap_generator:
+        return jsonify({"error": "ACI 模块未初始化"}), 500
+    
+    try:
+        session = consultation_manager.get_session(session_id)
+        if not session:
+            return jsonify({"error": "会话不存在"}), 404
+        
+        preview = soap_generator.generate_realtime_preview(session)
+        preview["transcript"] = session.get_transcript(include_roles=True)
+        preview["statistics"] = session.get_statistics()
+        
+        return jsonify({
+            "status": "success",
+            "preview": preview
+        })
+        
+    except Exception as e:
+        logger.error(f"Get SOAP preview error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/consultation/<session_id>/end', methods=['POST'])
+def end_consultation(session_id):
+    """结束会诊会话"""
+    if not consultation_manager:
+        return jsonify({"error": "ACI 模块未初始化"}), 500
+    
+    try:
+        session = consultation_manager.end_session(session_id, save=True)
+        if not session:
+            return jsonify({"error": "会话不存在"}), 404
+        
+        return jsonify({
+            "status": "success",
+            "message": "会诊已结束",
+            "statistics": session.get_statistics()
+        })
+        
+    except Exception as e:
+        logger.error(f"End consultation error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/emergency/assess', methods=['POST'])
+def assess_emergency():
+    """评估急救风险"""
+    if not emergency_detector:
+        return jsonify({"error": "急救检测模块未初始化"}), 500
+    
+    try:
+        data = request.json
+        text = data.get('text', '')
+        audio_features = data.get('audio_features')
+        
+        alert = emergency_detector.assess_risk(text, audio_features)
+        
+        response = {
+            "status": "success",
+            "alert": alert.to_dict()
+        }
+        
+        # 如果是危急级别，添加急救模式响应
+        if alert.level == "critical":
+            response["emergency_mode"] = emergency_detector.trigger_emergency_mode(alert)
+            response["first_aid"] = emergency_detector.get_first_aid_guidance(
+                alert.triggers[0] if alert.triggers else "general"
+            )
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"Assess emergency error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/aci/status', methods=['GET'])
+def aci_status():
+    """获取 ACI 模块状态"""
+    return jsonify({
+        "available": ACI_AVAILABLE,
+        "modules": {
+            "consultation_manager": consultation_manager is not None,
+            "entity_extractor": entity_extractor is not None,
+            "soap_generator": soap_generator is not None,
+            "hallucination_detector": hallucination_detector is not None,
+            "emergency_detector": emergency_detector is not None,
+            "speaker_diarizer": speaker_diarizer is not None
+        }
+    })
+
+
 if __name__ == '__main__':
     # 初始化所有模块
     initialize_modules()
+    
+    # 初始化 ACI 模块
+    initialize_aci_modules()
     
     # 启动服务器
     server_config = config.get('server', {})
@@ -937,3 +1294,4 @@ if __name__ == '__main__':
         port=server_config.get('port', 5000),
         debug=server_config.get('debug', False)
     )
+

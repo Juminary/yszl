@@ -54,7 +54,9 @@ class ASRModule:
             from pathlib import Path
             from modelscope import snapshot_download
             
-            models_dir = Path(__file__).parent.parent / "models" / "asr"
+            # 模型目录: server/models/asr (需要从 core/ 往上走两级到 modules/，再一级到 server/)
+            server_dir = Path(__file__).parent.parent.parent  # core/ -> modules/ -> server/
+            models_dir = server_dir / "models" / "asr"
             model_path = models_dir / "SenseVoiceSmall"
             
             if model_path.exists():
