@@ -88,6 +88,8 @@ async function checkServerConnection() {
         const response = await fetch(`${API_BASE}/health`);
         if (response.ok) {
             showToast('✅ 服务器连接成功');
+            // 连接成功后，启动SSE监听客户端消息
+            connectToEventStream();
         } else {
             showToast('⚠️ 服务器响应异常');
         }
@@ -95,6 +97,48 @@ async function checkServerConnection() {
         showToast('❌ 无法连接到服务器');
         console.error('Server connection error:', error);
     }
+}
+
+// ========================================
+// SSE 消息同步 - 显示客户端的对话
+// ========================================
+function connectToEventStream() {
+    const eventSource = new EventSource(`${API_BASE}/events`);
+
+    eventSource.onopen = () => {
+        console.log('SSE 连接已建立');
+    };
+
+    eventSource.onmessage = (event) => {
+        try {
+            const message = JSON.parse(event.data);
+
+            // 忽略心跳和连接消息
+            if (message.type === 'heartbeat' || message.type === 'connected') {
+                return;
+            }
+
+            // 用户消息 (来自客户端)
+            if (message.type === 'user_message' && message.data.source === 'client') {
+                addMessage('user', message.data.text, { fromClient: true });
+            }
+
+            // 助手回复 (来自客户端的对话)
+            if (message.type === 'assistant_message' && message.data.text) {
+                addMessage('assistant', message.data.text, { fromClient: true });
+            }
+
+            console.log('收到SSE消息:', message);
+        } catch (e) {
+            console.error('解析SSE消息失败:', e);
+        }
+    };
+
+    eventSource.onerror = (error) => {
+        console.log('SSE 连接断开，5秒后重连...');
+        eventSource.close();
+        setTimeout(connectToEventStream, 5000);
+    };
 }
 
 // ========================================
@@ -292,13 +336,58 @@ async function sendTextMessage() {
 
         const data = await response.json();
 
+        // ========================================
+        // 处理语音模式切换
+        // ========================================
+        if (data.mode_switched) {
+            const newMode = data.mode;
+
+            // 更新全局模式状态
+            if (window.AppMode) {
+                window.AppMode.current = newMode;
+            }
+
+            // 更新UI按钮状态
+            const modeBtns = document.querySelectorAll('.mode-btn');
+            modeBtns.forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.dataset.mode === newMode) {
+                    btn.classList.add('active');
+                }
+            });
+
+            // 如果切换到会诊模式，启动会诊
+            if (newMode === 'consultation' && window.startDoctorConsultation) {
+                removeMessage(loadingMsg);
+                addMessage('assistant', data.text);
+                synthesizeAndPlay(data.text);
+                // 延迟启动会诊以确保语音播放
+                setTimeout(() => {
+                    window.startDoctorConsultation();
+                }, 500);
+                return;
+            }
+
+            // 显示模式切换确认消息
+            removeMessage(loadingMsg);
+            addMessage('assistant', data.text);
+            synthesizeAndPlay(data.text);
+
+            console.log(`语音切换模式: ${data.previous_mode} -> ${newMode}`);
+            return;
+        }
+
+        // ========================================
+        // 正常对话处理
+        // ========================================
+
         // 更新 RAG 状态
         const ragUsed = data.rag_used || false;
         updateRagStatus(ragUsed, data.rag_context);
 
         // 移除加载消息，添加真实回复
         removeMessage(loadingMsg);
-        const responseText = data.response || '抱歉，我没有理解您的意思。';
+        const responseText = data.response || data.text || '抱歉，我没有理解您的意思。';
         addMessage('assistant', responseText);
 
         // 请求语音合成并播放
@@ -378,6 +467,9 @@ function addMessage(role, text, options = {}) {
         `;
         messageEl.dataset.loading = 'true';
     } else {
+        // 来自客户端的消息添加特殊标识
+        const clientIndicator = options.fromClient ? '<span class="client-indicator">📱 客户端</span>' : '';
+
         messageEl.innerHTML = `
             <div class="message-avatar">${avatar}</div>
             <div class="message-content">
@@ -385,6 +477,7 @@ function addMessage(role, text, options = {}) {
                 <div class="message-meta">
                     <span>${time}</span>
                     ${options.isVoice ? '<span>🎤 语音</span>' : ''}
+                    ${clientIndicator}
                 </div>
             </div>
         `;

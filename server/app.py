@@ -24,12 +24,15 @@ for logger_name in ['modelscope', 'funasr', 'transformers', 'torch',
 # 抑制root logger的WARNING
 logging.getLogger().setLevel(logging.ERROR)
 
-from flask import Flask, request, jsonify, send_file, send_from_directory
+from flask import Flask, request, jsonify, send_file, send_from_directory, Response
 from flask_cors import CORS
 import yaml
 from pathlib import Path
 import tempfile
 from datetime import datetime
+import queue
+import threading
+import json
 
 # 设置模型缓存目录到项目的 models 文件夹
 MODEL_CACHE_DIR = os.path.join(os.path.dirname(__file__), 'models')
@@ -84,6 +87,26 @@ CORS(app)
 # 全局变量存储模块实例
 modules = {}
 config = {}
+
+# ========================================
+# 消息广播系统 (SSE - Server-Sent Events)
+# 用于客户端和网页之间同步消息
+# ========================================
+message_subscribers = []  # 存储所有SSE订阅者的队列
+
+def broadcast_message(msg_type: str, data: dict):
+    """广播消息给所有订阅者"""
+    message = {
+        "type": msg_type,
+        "data": data,
+        "timestamp": datetime.now().isoformat()
+    }
+    # 复制列表以避免迭代时修改
+    for q in message_subscribers[:]:
+        try:
+            q.put_nowait(message)
+        except:
+            pass
 
 
 def load_config(config_path: str = "config/config.yaml"):
@@ -345,6 +368,38 @@ def health_check():
     })
 
 
+@app.route('/events', methods=['GET'])
+def events_stream():
+    """SSE事件流 - 用于实时推送客户端消息到网页"""
+    def generate():
+        q = queue.Queue()
+        message_subscribers.append(q)
+        try:
+            # 发送连接成功事件
+            yield f"data: {json.dumps({'type': 'connected', 'message': '已连接到消息流'})}\n\n"
+            
+            while True:
+                try:
+                    # 等待消息，超时30秒发送心跳
+                    message = q.get(timeout=30)
+                    yield f"data: {json.dumps(message, ensure_ascii=False)}\n\n"
+                except queue.Empty:
+                    # 发送心跳保持连接
+                    yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+        finally:
+            message_subscribers.remove(q)
+    
+    return Response(
+        generate(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no'
+        }
+    )
+
+
 @app.route('/asr', methods=['POST'])
 def asr_endpoint():
     """语音识别接口"""
@@ -472,7 +527,7 @@ def speaker_list():
 
 @app.route('/dialogue', methods=['POST'])
 def dialogue_endpoint():
-    """对话接口"""
+    """对话接口 - 支持语音命令切换模式"""
     try:
         data = request.get_json()
         
@@ -482,7 +537,43 @@ def dialogue_endpoint():
         query = data['query']
         session_id = data.get('session_id', 'default')
         reset = data.get('reset', False)
-        mode = data.get('mode', 'patient')  # patient | doctor
+        mode = data.get('mode', 'patient')  # patient | doctor | consultation
+        
+        # ========================================
+        # 语音命令模式切换检测
+        # ========================================
+        mode_switch_commands = {
+            'patient': ['切换到患者模式', '患者模式', '切换患者模式', '进入患者模式', '我是患者'],
+            'doctor': ['切换到医生模式', '医生模式', '切换医生模式', '进入医生模式', '我是医生'],
+            'consultation': ['切换到会诊模式', '会诊模式', '开始会诊', '进入会诊模式', '启动会诊']
+        }
+        
+        # 检查是否是模式切换命令
+        query_clean = query.strip().replace(' ', '')
+        for target_mode, commands in mode_switch_commands.items():
+            for cmd in commands:
+                if cmd.replace(' ', '') in query_clean or query_clean in cmd.replace(' ', ''):
+                    # 检测到模式切换命令
+                    mode_names = {'patient': '患者', 'doctor': '医生', 'consultation': '会诊'}
+                    response_text = f"好的，已切换到{mode_names[target_mode]}模式。"
+                    
+                    if target_mode == 'patient':
+                        response_text += "请描述您的症状，我会为您提供导诊建议。"
+                    elif target_mode == 'doctor':
+                        response_text += "我将为您提供专业的辅助诊断建议。"
+                    elif target_mode == 'consultation':
+                        response_text += "会诊模式已启动，我会记录对话并生成病历。"
+                    
+                    return jsonify({
+                        "text": response_text,
+                        "mode": target_mode,
+                        "mode_switched": True,
+                        "previous_mode": mode
+                    })
+        
+        # ========================================
+        # 正常对话处理
+        # ========================================
         
         # 根据模式选择不同的系统提示词
         mode_prompts = {
@@ -502,7 +593,11 @@ def dialogue_endpoint():
 只用纯中文回答，禁止英文和数字。
 只用中文逗号和句号，禁止其他标点。
 禁止使用列表和编号格式，必须写成连贯的一段话。
-态度专业严谨，像一个经验丰富的主治医师在与同事讨论病例。"""
+态度专业严谨，像一个经验丰富的主治医师在与同事讨论病例。""",
+
+            'consultation': """你是会诊记录助手，正在记录医患对话。
+请简洁回应确认你正在记录，不需要提供医疗建议。
+回复简短即可，如"好的，已记录"或"继续"。"""
         }
         
         system_prompt = mode_prompts.get(mode, mode_prompts['patient'])
@@ -516,6 +611,13 @@ def dialogue_endpoint():
         )
         
         result['mode'] = mode
+        result['mode_switched'] = False
+        
+        # 广播消息到网页（用于客户端同步显示）
+        response_text = result.get('response', result.get('text', ''))
+        broadcast_message('user_message', {'text': query, 'mode': mode, 'source': 'client'})
+        broadcast_message('assistant_message', {'text': response_text, 'mode': mode})
+        
         return jsonify(result)
         
     except Exception as e:
@@ -654,6 +756,63 @@ def chat_endpoint():
         # 删除临时音频文件
         temp_path.unlink()
         
+        # ========================================
+        # 语音命令模式切换检测
+        # ========================================
+        mode_switch_commands = {
+            'patient': ['切换到患者模式', '患者模式', '切换患者模式', '进入患者模式', '我是患者'],
+            'doctor': ['切换到医生模式', '医生模式', '切换医生模式', '进入医生模式', '我是医生'],
+            'consultation': ['切换到会诊模式', '会诊模式', '开始会诊', '进入会诊模式', '启动会诊']
+        }
+        
+        text_clean = text.strip().replace(' ', '')
+        for target_mode, commands in mode_switch_commands.items():
+            for cmd in commands:
+                if cmd.replace(' ', '') in text_clean or text_clean in cmd.replace(' ', ''):
+                    # 检测到模式切换命令
+                    mode_names = {'patient': '患者', 'doctor': '医生', 'consultation': '会诊'}
+                    response_text = f"好的，已切换到{mode_names[target_mode]}模式。"
+                    
+                    if target_mode == 'patient':
+                        response_text += "请描述您的症状，我会为您提供导诊建议。"
+                    elif target_mode == 'doctor':
+                        response_text += "我将为您提供专业的辅助诊断建议。"
+                    elif target_mode == 'consultation':
+                        response_text += "会诊模式已启动，我会记录对话并生成病历。"
+                    
+                    # 广播消息到网页
+                    broadcast_message('user_message', {'text': text, 'mode': target_mode, 'source': 'client'})
+                    broadcast_message('assistant_message', {'text': response_text, 'mode': target_mode})
+                    
+                    # 语音合成模式切换确认
+                    tts_result = modules['tts'].synthesize(text=response_text)
+                    
+                    if tts_result.get('output_path'):
+                        from flask import make_response
+                        from urllib.parse import quote
+                        response = make_response(send_file(
+                            tts_result['output_path'],
+                            mimetype='audio/wav',
+                            as_attachment=True,
+                            download_name='response.wav'
+                        ))
+                        response.headers['X-ASR-Text'] = quote(text, safe='')
+                        response.headers['X-Response-Text'] = quote(response_text, safe='')
+                        response.headers['X-Mode-Switched'] = 'true'
+                        response.headers['X-New-Mode'] = target_mode
+                        return response
+                    else:
+                        return jsonify({
+                            "text": response_text,
+                            "mode": target_mode,
+                            "mode_switched": True,
+                            "asr": asr_result
+                        })
+        
+        # ========================================
+        # 正常对话流程
+        # ========================================
+        
         # 4. 对话生成
         dialogue_result = modules['dialogue'].chat(
             query=text,
@@ -663,6 +822,10 @@ def chat_endpoint():
         
         # 5. 语音合成
         tts_result = modules['tts'].synthesize(text=response_text)
+        
+        # 广播消息到网页
+        broadcast_message('user_message', {'text': text, 'mode': 'voice', 'source': 'client'})
+        broadcast_message('assistant_message', {'text': response_text, 'mode': 'voice'})
         
         # 返回完整结果
         result = {
@@ -692,6 +855,7 @@ def chat_endpoint():
             response.headers['X-Emotion'] = emotion_result.get('emotion', '')
             response.headers['X-Speaker'] = speaker_result.get('speaker_id', '')
             response.headers['X-RAG-Used'] = str(dialogue_result.get('rag_used', False))
+            response.headers['X-Mode-Switched'] = 'false'
             return response
         else:
             return jsonify(result)
