@@ -269,23 +269,56 @@ def initialize_modules():
                 rag_module = None
     
     try:
-        # 初始化对话模块 (Qwen2.5-0.5B-Instruct)
+        # 初始化对话模块
         dialogue_config = config.get('dialogue', {})
-        try:
-            modules['dialogue'] = DialogueModule(
-                model_name=dialogue_config.get('model', 'Qwen/Qwen2.5-0.5B-Instruct'),
-                device=dialogue_config.get('device', 'cpu'),
-                max_length=dialogue_config.get('max_length', 512),
-                temperature=dialogue_config.get('temperature', 0.7),
-                top_p=dialogue_config.get('top_p', 0.9),
-                history_length=dialogue_config.get('history_length', 10),
-                rag_module=rag_module,
-                system_prompt=dialogue_config.get('system_prompt')  # 从配置读取系统提示词
-            )
-            logger.info("Dialogue module initialized (Qwen2.5-0.5B)" + (" with RAG" if rag_module else ""))
-        except Exception as inner_e:
-            logger.warning(f"Using simplified dialogue module: {inner_e}")
-            modules['dialogue'] = SimplDialogueModule()
+        provider = dialogue_config.get('provider', 'transformers')
+        
+        if provider == 'gguf':
+            # 使用 GGUF 量化模型
+            try:
+                from modules.core.gguf_dialogue import GGUFDialogueModule, download_gguf_model
+                
+                gguf_repo = dialogue_config.get('gguf_repo', 'unsloth/Qwen3-4B-GGUF')
+                gguf_file = dialogue_config.get('gguf_file', 'Qwen3-4B-Q4_K_M.gguf')
+                gguf_source = dialogue_config.get('gguf_source', 'huggingface')
+                gguf_dir = os.path.join(os.path.dirname(__file__), 'models', 'gguf')
+                
+                # 检查并下载模型
+                model_path = os.path.join(gguf_dir, gguf_file)
+                if not os.path.exists(model_path):
+                    model_path = download_gguf_model(gguf_repo, gguf_file, gguf_dir, gguf_source)
+                
+                modules['dialogue'] = GGUFDialogueModule(
+                    model_path=model_path,
+                    temperature=dialogue_config.get('temperature', 0.7),
+                    top_p=dialogue_config.get('top_p', 0.9),
+                    max_tokens=dialogue_config.get('max_length', 512),
+                    system_prompt=dialogue_config.get('system_prompt'),
+                    rag_module=rag_module
+                )
+                logger.info(f"Dialogue module initialized (GGUF: {gguf_file})" + (" with RAG" if rag_module else ""))
+                
+            except Exception as e:
+                logger.warning(f"GGUF failed, falling back to transformers: {e}")
+                provider = 'transformers'  # 回退到 transformers
+        
+        if provider == 'transformers':
+            # 使用 Transformers 模型
+            try:
+                modules['dialogue'] = DialogueModule(
+                    model_name=dialogue_config.get('model', 'Qwen/Qwen2.5-0.5B-Instruct'),
+                    device=dialogue_config.get('device', 'cpu'),
+                    max_length=dialogue_config.get('max_length', 512),
+                    temperature=dialogue_config.get('temperature', 0.7),
+                    top_p=dialogue_config.get('top_p', 0.9),
+                    history_length=dialogue_config.get('history_length', 10),
+                    rag_module=rag_module,
+                    system_prompt=dialogue_config.get('system_prompt')
+                )
+                logger.info("Dialogue module initialized (Transformers)" + (" with RAG" if rag_module else ""))
+            except Exception as inner_e:
+                logger.warning(f"Using simplified dialogue module: {inner_e}")
+                modules['dialogue'] = SimplDialogueModule()
         
     except Exception as e:
         logger.error(f"Failed to initialize Dialogue: {e}")

@@ -30,13 +30,24 @@ speaker:
   device: "cuda"  # 使用GPU加速
   db_path: "data/speaker_db.pkl"
 
-# 对话系统配置 (Qwen2.5-0.5B-Instruct)
+# 对话系统配置 (支持 GGUF 量化模型)
 dialogue:
+  # 模型提供者: transformers (HuggingFace), gguf (llama.cpp)
+  provider: "gguf"
+  
+  # GGUF 配置 (当 provider=gguf 时使用)
+  gguf_repo: "Qwen/Qwen3-4B-GGUF"     # ModelScope 仓库
+  gguf_file: "qwen3-4b-q4_k_m.gguf"   # GGUF 文件名 (小写)
+  gguf_source: "modelscope"           # 下载源: huggingface, modelscope
+  
+  # Transformers 配置 (当 provider=transformers 时使用)
   model: "Qwen/Qwen2.5-0.5B-Instruct"
+  
+  # 通用参数
   max_length: 512
   temperature: 0.7
   top_p: 0.9
-  device: "cuda"  # 使用GPU加速
+  device: "cpu"  # GGUF 使用 Metal 自动加速
   history_length: 10
   system_prompt: |
     你是一个专业的医疗语音助手。你需要根据用户的角色（患者或医生）提供不同的服务：

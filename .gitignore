@@ -44,6 +44,8 @@ server/models/tts/*
 !server/models/tts/.gitkeep
 server/models/cache/*
 !server/models/cache/.gitkeep
+server/models/gguf/*
+!server/models/gguf/.gitkeep
 
 # ModelScope 缓存
 **/._____temp/
