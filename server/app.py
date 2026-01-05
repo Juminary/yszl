@@ -323,13 +323,17 @@ def initialize_modules():
     try:
         knowledge_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'medical_knowledge.json')
         
-        # 患者导诊模块（支持 RAG + LLM）
-        modules['triage'] = TriageModule(
-            knowledge_path=knowledge_path,
+        # 患者导诊模块（支持 RAG + LLM + 实体提取）
+        from modules.medical.triage import TriageService
+        hospital_db_path = os.path.join(os.path.dirname(__file__), 'data', 'hospital.db')
+        
+        modules['triage'] = TriageService(
+            db_path=hospital_db_path,
+            dialogue_module=modules.get('dialogue'),
             rag_module=rag_module,
-            dialogue_module=modules.get('dialogue')
+            entity_extractor=entity_extractor
         )
-        logger.info("Triage module initialized" + (" with RAG+LLM" if rag_module else ""))
+        logger.info(f"Triage module initialized with SQLite: {hospital_db_path}")
         
         # 医生辅助诊断模块（支持 RAG + LLM）
         modules['diagnosis'] = DiagnosisAssistant(
@@ -614,6 +618,74 @@ def dialogue_endpoint():
         }
         
         system_prompt = mode_prompts.get(mode, mode_prompts['patient'])
+        
+        # ========================================
+        # 患者模式：根据意图决定是否导诊
+        # ========================================
+        if mode == 'patient' and 'triage' in modules:
+            # 判断是否需要导诊的关键词
+            triage_keywords = [
+                '挂什么科', '看什么科', '去哪个科', '哪个科室',
+                '挂号', '看医生', '去医院', '要不要去医院',
+                '应该挂', '建议挂', '推荐科室', '推荐医生',
+                '帮我挂', '需要看医生', '想看医生'
+            ]
+            
+            # 症状描述词（表示可能需要导诊）
+            symptom_patterns = [
+                '疼', '痛', '发烧', '发热', '咳嗽', '头晕', '恶心', '呕吐',
+                '拉肚子', '腹泻', '胸闷', '心慌', '不舒服', '难受',
+                '三天', '一周', '几天了', '好久了'
+            ]
+            
+            # 非导诊请求的关键词
+            non_triage_keywords = [
+                '吃什么', '怎么办', '注意什么', '食疗', '食物',
+                '如何预防', '怎么治', '怎么调理', '有什么偏方',
+                '你是谁', '你好', '谢谢', '再见'
+            ]
+            
+            # 检测是否明确请求导诊
+            needs_triage = any(kw in query for kw in triage_keywords)
+            
+            # 如果没有明确请求导诊，但有症状描述且没有非导诊关键词，也触发导诊
+            has_symptoms = any(kw in query for kw in symptom_patterns)
+            has_non_triage = any(kw in query for kw in non_triage_keywords)
+            
+            if not needs_triage and has_symptoms and not has_non_triage:
+                # 症状描述，可能需要导诊，但不确定
+                # 可以考虑提示用户是否需要导诊，这里暂时触发导诊
+                needs_triage = True
+            
+            print(f"\n[DEBUG] 意图分析: 需要导诊={needs_triage}, 有症状={has_symptoms}, 非导诊={has_non_triage}")
+            
+            if needs_triage:
+                try:
+                    print(f"[DEBUG] 调用导诊服务，输入: {query}")
+                    triage_result = modules['triage'].analyze(query)
+                    print(f"[DEBUG] 导诊结果: 科室={triage_result.get('department', {}).get('name', '未匹配')}")
+                    
+                    # 只有当匹配到科室时才使用导诊回复
+                    if triage_result.get('department') and triage_result.get('response'):
+                        print(f"[DEBUG] 使用导诊服务回复")
+                        result = {
+                            'response': triage_result['response'],
+                            'mode': mode,
+                            'mode_switched': False,
+                            'triage': {
+                                'department': triage_result.get('department', {}),
+                                'doctors': triage_result.get('doctors', []),
+                                'diseases': triage_result.get('diseases', [])
+                            }
+                        }
+                        return jsonify(result)
+                    else:
+                        print(f"[DEBUG] 导诊未匹配到科室，使用普通对话")
+                except Exception as e:
+                    print(f"[DEBUG] 导诊服务失败: {e}")
+                    logger.warning(f"Triage failed, using dialogue: {e}")
+            else:
+                print(f"[DEBUG] 非导诊请求，使用普通对话")
         
         # 执行对话
         result = modules['dialogue'].chat(
@@ -926,37 +998,88 @@ def chat_endpoint():
             except Exception as e:
                 logger.warning(f"Failed to record consultation utterance: {e}")
         
-        # 对话生成（使用当前模式的系统提示词）
-        dialogue_result = modules['dialogue'].chat(
-            query=text,
-            session_id=f"{session_id}_{current_mode}",  # 不同模式使用独立历史
-            system_prompt=system_prompt
-        )
-        response_text = dialogue_result.get('response', '')
+        # ========================================
+        # 患者模式：使用导诊服务
+        # ========================================
+        triage_result = None
+        if current_mode == 'patient' and 'triage' in modules:
+            try:
+                print(f"\n[DEBUG] 调用导诊服务，输入: {text}")
+                triage_result = modules['triage'].analyze(text)
+                print(f"[DEBUG] 导诊结果: 科室={triage_result.get('department', {}).get('name', '未匹配')}")
+                print(f"[DEBUG] 导诊结果: 医生={[d['name'] for d in triage_result.get('doctors', [])]}")
+                print(f"[DEBUG] 导诊结果: 回复={triage_result.get('response', '')[:100]}...")
+                logger.info(f"[导诊] 科室: {triage_result.get('department', {}).get('name', '未匹配')}")
+                
+                # 如果导诊服务返回了回复，直接使用
+                if triage_result.get('response'):
+                    response_text = triage_result['response']
+                else:
+                    # 否则使用对话模块生成回复
+                    dialogue_result = modules['dialogue'].chat(
+                        query=text,
+                        session_id=f"{session_id}_{current_mode}",
+                        system_prompt=system_prompt
+                    )
+                    response_text = dialogue_result.get('response', '')
+            except Exception as e:
+                logger.warning(f"[导诊] 导诊服务失败，使用对话模块: {e}")
+                dialogue_result = modules['dialogue'].chat(
+                    query=text,
+                    session_id=f"{session_id}_{current_mode}",
+                    system_prompt=system_prompt
+                )
+                response_text = dialogue_result.get('response', '')
+        else:
+            # 其他模式：使用对话模块
+            dialogue_result = modules['dialogue'].chat(
+                query=text,
+                session_id=f"{session_id}_{current_mode}",
+                system_prompt=system_prompt
+            )
+            response_text = dialogue_result.get('response', '')
         
         # 5. 语音合成
         tts_result = modules['tts'].synthesize(text=response_text)
         
         # 广播消息到网页
         broadcast_message('user_message', {'text': text, 'mode': current_mode, 'source': 'client'})
-        broadcast_message('assistant_message', {
+        
+        # 构建广播数据，包含导诊信息
+        broadcast_data = {
             'text': response_text, 
             'mode': current_mode,
-            'rag_used': dialogue_result.get('rag_used', False),
-            'rag_context': dialogue_result.get('rag_context', '')
-        })
+            'rag_used': False,
+            'rag_context': ''
+        }
+        if triage_result:
+            broadcast_data['triage'] = {
+                'department': triage_result.get('department', {}),
+                'doctors': triage_result.get('doctors', []),
+                'diseases': triage_result.get('diseases', [])
+            }
+        broadcast_message('assistant_message', broadcast_data)
         
         # 返回完整结果
         result = {
             "asr": asr_result,
             "emotion": emotion_result,
             "speaker": speaker_result,
-            "dialogue": dialogue_result,
+            "response": response_text,
             "tts": {
                 "output_path": tts_result.get('output_path'),
                 "duration": tts_result.get('duration')
             }
         }
+        
+        # 添加导诊结果
+        if triage_result:
+            result['triage'] = {
+                'department': triage_result.get('department', {}),
+                'doctors': triage_result.get('doctors', []),
+                'diseases': triage_result.get('diseases', []),
+                'symptoms': triage_result.get('symptoms', [])
+            }
         
         # 如果有音频文件，返回音频
         if tts_result.get('output_path'):
