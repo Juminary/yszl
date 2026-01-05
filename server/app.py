@@ -22,18 +22,7 @@ for logger_name in ['modelscope', 'funasr', 'transformers', 'torch',
     logging.getLogger(logger_name).setLevel(logging.ERROR)
 
 # 抑制root logger的WARNING
-# 抑制root logger的WARNING
 logging.getLogger().setLevel(logging.ERROR)
-
-# 添加文件日志用于调试
-try:
-    file_handler = logging.FileHandler('server_debug.log')
-    file_handler.setLevel(logging.ERROR)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    file_handler.setFormatter(formatter)
-    logging.getLogger().addHandler(file_handler)
-except Exception as e:
-    print(f"Failed to set up file logging: {e}")
 
 from flask import Flask, request, jsonify, send_file, send_from_directory, Response
 from flask_cors import CORS
@@ -44,8 +33,6 @@ from datetime import datetime
 import queue
 import threading
 import json
-import time
-import traceback
 
 # 设置模型缓存目录到项目的 models 文件夹
 MODEL_CACHE_DIR = os.path.join(os.path.dirname(__file__), 'models')
@@ -588,115 +575,6 @@ def speaker_list():
         return jsonify({"error": str(e)}), 500
 
 
-# ========================================
-# 核心对话处理函数（供 /dialogue 和 /chat 共用）
-# ========================================
-
-# 模式专用的系统提示词
-MODE_PROMPTS = {
-    'patient': """你是一个智能医疗助手，帮助患者分析症状、给出初步的健康生活建议，并建议应该挂什么科室。
-你的职责是，根据患者描述的症状，分析可能的健康问题，提供初步的日常护理建议（如休息、饮食、补水等），并建议患者应该去哪个科室就诊。
-你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求，
-只用纯中文回答，禁止英文和数字。
-只用中文逗号和句号，禁止其他标点。
-禁止使用列表和编号格式，必须写成连贯的一段话。
-态度温和友好，像一个耐心的专业护士。
-在提供建议的同时，必须告知患者这不替代医生面诊，必要时及时就医。""",
-
-    'doctor': """你是医生的AI诊断辅助助手，帮助医生分析病情、提供鉴别诊断和治疗方案建议。
-你应该使用专业的医学术语，提供基于循证医学的建议。
-你的职责包括，分析患者症状提供鉴别诊断，建议必要的检查项目，提供治疗方案参考，提示潜在的风险和禁忌症。
-你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求，
-只用纯中文回答，禁止英文和数字。
-只用中文逗号和句号，禁止其他标点。
-禁止使用列表和编号格式，必须写成连贯的一段话。
-态度专业严谨，像一个经验丰富的主治医师在与同事讨论病例。""",
-
-    'consultation': """你是会诊记录助手，正在记录医患对话。
-请简洁回应确认你正在记录，不需要提供医疗建议。
-回复简短即可，如"好的，已记录"或"继续"。"""
-}
-
-# 导诊意图检测关键词
-TRIAGE_KEYWORDS = [
-    '挂什么科', '看什么科', '去哪个科', '哪个科室',
-    '挂号', '看医生', '去医院', '要不要去医院',
-    '应该挂', '建议挂', '推荐科室', '推荐医生',
-    '帮我挂', '需要看医生', '想看医生'
-]
-
-SYMPTOM_PATTERNS = [
-    '疼', '痛', '发烧', '发热', '咳嗽', '头晕', '恶心', '呕吐',
-    '拉肚子', '腹泻', '胸闷', '心慌', '不舒服', '难受',
-    '三天', '一周', '几天了', '好久了'
-]
-
-NON_TRIAGE_KEYWORDS = [
-    '吃什么', '怎么办', '注意什么', '食疗', '食物',
-    '如何预防', '怎么治', '怎么调理', '有什么偏方',
-    '你是谁', '你好', '谢谢', '再见'
-]
-
-
-def process_dialogue_core(query: str, session_id: str, mode: str, reset: bool = False) -> dict:
-    """
-    核心对话处理逻辑（供 /dialogue 和 /chat 共用）
-    
-    Returns:
-        dict: 包含 response, mode, triage 等信息
-    """
-    system_prompt = MODE_PROMPTS.get(mode, MODE_PROMPTS['patient'])
-    
-    # 患者模式：根据意图决定是否导诊
-    if mode == 'patient' and 'triage' in modules:
-        needs_triage = any(kw in query for kw in TRIAGE_KEYWORDS)
-        has_symptoms = any(kw in query for kw in SYMPTOM_PATTERNS)
-        has_non_triage = any(kw in query for kw in NON_TRIAGE_KEYWORDS)
-        
-        if not needs_triage and has_symptoms and not has_non_triage:
-            needs_triage = True
-        
-        print(f"\n[DEBUG] 意图分析: 需要导诊={needs_triage}, 有症状={has_symptoms}, 非导诊={has_non_triage}")
-        
-        if needs_triage:
-            try:
-                print(f"[DEBUG] 调用导诊服务，输入: {query}")
-                triage_result = modules['triage'].analyze(query)
-                print(f"[DEBUG] 导诊结果: 科室={triage_result.get('department', {}).get('name', '未匹配')}")
-                
-                if triage_result.get('department') and triage_result.get('response'):
-                    print(f"[DEBUG] 使用导诊服务回复")
-                    return {
-                        'response': triage_result['response'],
-                        'mode': mode,
-                        'mode_switched': False,
-                        'triage': {
-                            'department': triage_result.get('department', {}),
-                            'doctors': triage_result.get('doctors', []),
-                            'diseases': triage_result.get('diseases', [])
-                        }
-                    }
-                else:
-                    print(f"[DEBUG] 导诊未匹配到科室，使用普通对话")
-            except Exception as e:
-                print(f"[DEBUG] 导诊服务失败: {e}")
-                logger.warning(f"Triage failed, using dialogue: {e}")
-        else:
-            print(f"[DEBUG] 非导诊请求，使用普通对话")
-    
-    # 普通对话
-    result = modules['dialogue'].chat(
-        query=query,
-        session_id=f"{session_id}_{mode}",
-        reset=reset,
-        system_prompt=system_prompt
-    )
-    
-    result['mode'] = mode
-    result['mode_switched'] = False
-    return result
-
-
 @app.route('/dialogue', methods=['POST'])
 def dialogue_endpoint():
     """对话接口 - 支持语音命令切换模式"""
@@ -720,10 +598,12 @@ def dialogue_endpoint():
             'consultation': ['切换到会诊模式', '会诊模式', '开始会诊', '进入会诊模式', '启动会诊']
         }
         
+        # 检查是否是模式切换命令
         query_clean = query.strip().replace(' ', '')
         for target_mode, commands in mode_switch_commands.items():
             for cmd in commands:
                 if cmd.replace(' ', '') in query_clean or query_clean in cmd.replace(' ', ''):
+                    # 检测到模式切换命令
                     mode_names = {'patient': '患者', 'doctor': '医生', 'consultation': '会诊'}
                     response_text = f"好的，已切换到{mode_names[target_mode]}模式。"
                     
@@ -735,14 +615,123 @@ def dialogue_endpoint():
                         response_text += "会诊模式已启动，我会记录对话并生成病历。"
                     
                     return jsonify({
-                        "response": response_text,
+                        "text": response_text,
                         "mode": target_mode,
                         "mode_switched": True,
                         "previous_mode": mode
                     })
         
-        # 使用核心对话处理函数
-        result = process_dialogue_core(query, session_id, mode, reset)
+        # ========================================
+        # 正常对话处理
+        # ========================================
+        
+        # 根据模式选择不同的系统提示词
+        mode_prompts = {
+            'patient': """你是一个智能医疗助手，帮助患者分析症状、给出初步的健康生活建议，并建议应该挂什么科室。
+你的职责是，根据患者描述的症状，分析可能的健康问题，提供初步的日常护理建议（如休息、饮食、补水等），并建议患者应该去哪个科室就诊。
+你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求，
+只用纯中文回答，禁止英文和数字。
+只用中文逗号和句号，禁止其他标点。
+禁止使用列表和编号格式，必须写成连贯的一段话。
+态度温和友好，像一个耐心的专业护士。
+在提供建议的同时，必须告知患者这不替代医生面诊，必要时及时就医。""",
+
+            'doctor': """你是医生的AI诊断辅助助手，帮助医生分析病情、提供鉴别诊断和治疗方案建议。
+你应该使用专业的医学术语，提供基于循证医学的建议。
+你的职责包括，分析患者症状提供鉴别诊断，建议必要的检查项目，提供治疗方案参考，提示潜在的风险和禁忌症。
+你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求，
+只用纯中文回答，禁止英文和数字。
+只用中文逗号和句号，禁止其他标点。
+禁止使用列表和编号格式，必须写成连贯的一段话。
+态度专业严谨，像一个经验丰富的主治医师在与同事讨论病例。""",
+
+            'consultation': """你是会诊记录助手，正在记录医患对话。
+请简洁回应确认你正在记录，不需要提供医疗建议。
+回复简短即可，如"好的，已记录"或"继续"。"""
+        }
+        
+        system_prompt = mode_prompts.get(mode, mode_prompts['patient'])
+        
+        # ========================================
+        # 患者模式：根据意图决定是否导诊
+        # ========================================
+        if mode == 'patient' and 'triage' in modules:
+            # 判断是否需要导诊的关键词
+            triage_keywords = [
+                '挂什么科', '看什么科', '去哪个科', '哪个科室',
+                '挂号', '看医生', '去医院', '要不要去医院',
+                '应该挂', '建议挂', '推荐科室', '推荐医生',
+                '帮我挂', '需要看医生', '想看医生'
+            ]
+            
+            # 症状描述词（表示可能需要导诊）
+            symptom_patterns = [
+                '疼', '痛', '发烧', '发热', '咳嗽', '头晕', '恶心', '呕吐',
+                '拉肚子', '腹泻', '胸闷', '心慌', '不舒服', '难受',
+                '三天', '一周', '几天了', '好久了'
+            ]
+            
+            # 非导诊请求的关键词
+            non_triage_keywords = [
+                '吃什么', '怎么办', '注意什么', '食疗', '食物',
+                '如何预防', '怎么治', '怎么调理', '有什么偏方',
+                '你是谁', '你好', '谢谢', '再见'
+            ]
+            
+            # 检测是否明确请求导诊
+            needs_triage = any(kw in query for kw in triage_keywords)
+            
+            # 如果没有明确请求导诊，但有症状描述且没有非导诊关键词，也触发导诊
+            has_symptoms = any(kw in query for kw in symptom_patterns)
+            has_non_triage = any(kw in query for kw in non_triage_keywords)
+            
+            if not needs_triage and has_symptoms and not has_non_triage:
+                # 症状描述，可能需要导诊，但不确定
+                # 可以考虑提示用户是否需要导诊，这里暂时触发导诊
+                needs_triage = True
+            
+            print(f"\n[DEBUG] 意图分析: 需要导诊={needs_triage}, 有症状={has_symptoms}, 非导诊={has_non_triage}")
+            
+            if needs_triage:
+                try:
+                    print(f"[DEBUG] 调用导诊服务，输入: {query}")
+                    triage_result = modules['triage'].analyze(query)
+                    print(f"[DEBUG] 导诊结果: 科室={triage_result.get('department', {}).get('name', '未匹配')}")
+                    
+                    # 只有当匹配到科室时才使用导诊回复
+                    if triage_result.get('department') and triage_result.get('response'):
+                        print(f"[DEBUG] 使用导诊服务回复")
+                        result = {
+                            'response': triage_result['response'],
+                            'mode': mode,
+                            'mode_switched': False,
+                            'triage': {
+                                'department': triage_result.get('department', {}),
+                                'doctors': triage_result.get('doctors', []),
+                                'diseases': triage_result.get('diseases', [])
+                            }
+                        }
+                        return jsonify(result)
+                    else:
+                        print(f"[DEBUG] 导诊未匹配到科室，使用普通对话")
+                except Exception as e:
+                    print(f"[DEBUG] 导诊服务失败: {e}")
+                    logger.warning(f"Triage failed, using dialogue: {e}")
+            else:
+                print(f"[DEBUG] 非导诊请求，使用普通对话")
+        
+        # 执行对话
+        result = modules['dialogue'].chat(
+            query=query,
+            session_id=f"{session_id}_{mode}",  # 不同模式使用不同的会话历史
+            reset=reset,
+            system_prompt=system_prompt
+        )
+        
+        # 更新 RAG 状态等信息
+        result['mode'] = mode
+        result['mode_switched'] = False
+        
         return jsonify(result)
         
     except Exception as e:
@@ -996,10 +985,38 @@ def chat_endpoint():
                         })
         
         # ========================================
-        # 使用核心对话处理函数
+        # 正常对话流程
         # ========================================
         
+        # 4. 获取当前会话模式并使用对应的系统提示词
         current_mode = session_modes.get(session_id, 'patient')
+        
+        # 模式专用的系统提示词
+        mode_prompts = {
+            'patient': """你是一个智能医疗助手，帮助患者分析症状、给出初步的健康生活建议，并建议应该挂什么科室。
+你的职责是，根据患者描述的症状，分析可能的健康问题，提供初步的日常护理建议（如休息、饮食、补水等），并建议患者应该去哪个科室就诊。
+你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求，
+只用纯中文回答，禁止英文和数字。
+只用中文逗号和句号，禁止其他标点。
+禁止使用列表和编号格式，必须写成连贯的一段话。
+态度温和友好，像一个耐心的专业护士。
+在提供建议的同时，必须告知患者这不替代医生面诊，必要时及时就医。""",
+
+            'doctor': """你是医生的AI诊断辅助助手，帮助医生分析病情、提供鉴别诊断和治疗方案建议。
+你应该使用专业的医学术语，提供基于循证医学的建议。
+你的职责包括，分析患者症状提供鉴别诊断，建议必要的检查项目，提供治疗方案参考，提示潜在的风险和禁忌症。
+你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求，
+只用纯中文回答，禁止英文和数字。
+只用中文逗号和句号，禁止其他标点。
+禁止使用列表和编号格式，必须写成连贯的一段话。
+态度专业严谨，像一个经验丰富的主治医师在与同事讨论病例。""",
+
+            'consultation': """你是会诊记录助手，正在记录医患对话。
+请简洁回应确认你正在记录，不需要提供医疗建议。
+回复简短即可，如"好的，已记录"或"继续"。"""
+        }
+        
+        system_prompt = mode_prompts.get(current_mode, mode_prompts['patient'])
         
         # 如果是会诊模式，记录到会诊会话
         if current_mode == 'consultation' and session_id in consultation_sessions:
@@ -1007,16 +1024,53 @@ def chat_endpoint():
                 consultation_sessions[session_id].add_utterance(
                     text=text,
                     speaker_id=speaker_result.get('speaker_id', 'unknown'),
-                    speaker_role='patient',
+                    speaker_role='patient',  # 默认为患者，实际应根据声纹识别
                     timestamp=time.time()
                 )
                 logger.info(f"[Consultation] Recorded utterance: {text[:50]}...")
             except Exception as e:
                 logger.warning(f"Failed to record consultation utterance: {e}")
         
-        # 调用核心对话处理函数
-        dialogue_result = process_dialogue_core(text, session_id, current_mode)
-        response_text = dialogue_result.get('response', '')
+        # ========================================
+        # 患者模式：使用导诊服务
+        # ========================================
+        triage_result = None
+        if current_mode == 'patient' and 'triage' in modules:
+            try:
+                print(f"\n[DEBUG] 调用导诊服务，输入: {text}")
+                triage_result = modules['triage'].analyze(text)
+                print(f"[DEBUG] 导诊结果: 科室={triage_result.get('department', {}).get('name', '未匹配')}")
+                print(f"[DEBUG] 导诊结果: 医生={[d['name'] for d in triage_result.get('doctors', [])]}")
+                print(f"[DEBUG] 导诊结果: 回复={triage_result.get('response', '')[:100]}...")
+                logger.info(f"[导诊] 科室: {triage_result.get('department', {}).get('name', '未匹配')}")
+                
+                # 如果导诊服务返回了回复，直接使用
+                if triage_result.get('response'):
+                    response_text = triage_result['response']
+                else:
+                    # 否则使用对话模块生成回复
+                    dialogue_result = modules['dialogue'].chat(
+                        query=text,
+                        session_id=f"{session_id}_{current_mode}",
+                        system_prompt=system_prompt
+                    )
+                    response_text = dialogue_result.get('response', '')
+            except Exception as e:
+                logger.warning(f"[导诊] 导诊服务失败，使用对话模块: {e}")
+                dialogue_result = modules['dialogue'].chat(
+                    query=text,
+                    session_id=f"{session_id}_{current_mode}",
+                    system_prompt=system_prompt
+                )
+                response_text = dialogue_result.get('response', '')
+        else:
+            # 其他模式：使用对话模块
+            dialogue_result = modules['dialogue'].chat(
+                query=text,
+                session_id=f"{session_id}_{current_mode}",
+                system_prompt=system_prompt
+            )
+            response_text = dialogue_result.get('response', '')
         
         # 5. 语音合成
         tts_result = modules['tts'].synthesize(text=response_text)
@@ -1024,15 +1078,19 @@ def chat_endpoint():
         # 广播消息到网页
         broadcast_message('user_message', {'text': text, 'mode': current_mode, 'source': 'client'})
         
-        # 构建广播数据
+        # 构建广播数据，包含导诊信息
         broadcast_data = {
             'text': response_text, 
             'mode': current_mode,
-            'rag_used': dialogue_result.get('rag_used', False),
-            'rag_context': dialogue_result.get('rag_context', '')
+            'rag_used': False,
+            'rag_context': ''
         }
-        if dialogue_result.get('triage'):
-            broadcast_data['triage'] = dialogue_result['triage']
+        if triage_result:
+            broadcast_data['triage'] = {
+                'department': triage_result.get('department', {}),
+                'doctors': triage_result.get('doctors', []),
+                'diseases': triage_result.get('diseases', [])
+            }
         broadcast_message('assistant_message', broadcast_data)
         
         # 返回完整结果
@@ -1048,8 +1106,13 @@ def chat_endpoint():
         }
         
         # 添加导诊结果
-        if dialogue_result.get('triage'):
-            result['triage'] = dialogue_result['triage']
+        if triage_result:
+            result['triage'] = {
+                'department': triage_result.get('department', {}),
+                'doctors': triage_result.get('doctors', []),
+                'diseases': triage_result.get('diseases', []),
+                'symptoms': triage_result.get('symptoms', [])
+            }
         
         # 如果有音频文件，返回音频
         if tts_result.get('output_path'):
@@ -1074,9 +1137,7 @@ def chat_endpoint():
             return jsonify(result)
         
     except Exception as e:
-        import traceback
-        error_msg = f"Chat endpoint error: {e}\n{traceback.format_exc()}"
-        logger.error(error_msg)
+        logger.error(f"Chat endpoint error: {e}")
         return jsonify({"error": str(e)}), 500
 
 
