@@ -1457,3 +1457,258 @@ body.doctor-mode::before {
 .btn-danger:hover {
     background: rgba(255, 82, 82, 0.4) !important;
 }
+
+/* ========================================
+   粘贴对话生成病历模态框
+   ======================================== */
+.paste-dialogue-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+.paste-modal-content {
+    background: var(--bg-dark);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: var(--border-radius);
+    width: 90%;
+    max-width: 700px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: var(--shadow-lg);
+    animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+    from {
+        transform: translateY(20px);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.paste-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 24px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.paste-modal-header h2 {
+    font-size: 1.2rem;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.paste-modal-body {
+    padding: 20px 24px;
+    flex: 1;
+    overflow-y: auto;
+}
+
+.paste-hint {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    margin-bottom: 12px;
+}
+
+.paste-example {
+    background: var(--bg-card);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--border-radius-sm);
+    padding: 14px 18px;
+    margin-bottom: 16px;
+    font-size: 0.85rem;
+    line-height: 1.8;
+}
+
+.paste-example code {
+    color: var(--primary-light);
+    font-family: 'Monaco', 'Consolas', monospace;
+}
+
+.dialogue-textarea {
+    width: 100%;
+    background: var(--bg-input);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: var(--border-radius-sm);
+    padding: 14px 18px;
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    font-family: inherit;
+    line-height: 1.6;
+    resize: vertical;
+    min-height: 200px;
+    outline: none;
+    transition: all var(--transition-fast);
+}
+
+.dialogue-textarea:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(0, 180, 216, 0.15);
+}
+
+.dialogue-textarea::placeholder {
+    color: var(--text-muted);
+}
+
+.paste-modal-footer {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    padding: 16px 24px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+    border: none;
+    border-radius: var(--border-radius-sm);
+    padding: 12px 24px;
+    color: white;
+    font-size: 0.95rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    box-shadow: 0 4px 12px rgba(0, 180, 216, 0.3);
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 180, 216, 0.4);
+}
+
+.btn-primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.btn-close {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.5rem;
+    cursor: pointer;
+    transition: color var(--transition-fast);
+    line-height: 1;
+}
+
+.btn-close:hover {
+    color: var(--text-primary);
+}
+
+/* 生成的SOAP结果模态框 */
+.generated-soap-modal .soap-modal-content {
+    max-width: 800px;
+}
+
+.soap-result-section {
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.soap-result-section:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+}
+
+.soap-result-section h3 {
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--primary-light);
+    margin-bottom: 10px;
+}
+
+.soap-result-section p {
+    color: var(--text-secondary);
+    line-height: 1.6;
+    font-size: 0.9rem;
+    margin-bottom: 6px;
+}
+
+.soap-result-section p strong {
+    color: var(--text-primary);
+}
+
+.entities-section {
+    background: var(--bg-card);
+    border-radius: var(--border-radius-sm);
+    padding: 16px;
+}
+
+.entity-tags {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.entity-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.entity-label {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    min-width: 50px;
+}
+
+.entity-tag {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.entity-tag.symptom {
+    background: rgba(255, 193, 7, 0.2);
+    color: #ffc107;
+    border: 1px solid rgba(255, 193, 7, 0.4);
+}
+
+.entity-tag.disease {
+    background: rgba(244, 67, 54, 0.2);
+    color: #f44336;
+    border: 1px solid rgba(244, 67, 54, 0.4);
+}
+
+.entity-tag.medication {
+    background: rgba(76, 175, 80, 0.2);
+    color: #4caf50;
+    border: 1px solid rgba(76, 175, 80, 0.4);
+}
+
+.entity-tag.procedure {
+    background: rgba(33, 150, 243, 0.2);
+    color: #2196f3;
+    border: 1px solid rgba(33, 150, 243, 0.4);
+}

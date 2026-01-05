@@ -234,6 +234,7 @@ function showSOAPPanel() {
             <div class="soap-header">
                 <h3>📋 SOAP 病历</h3>
                 <div class="soap-actions">
+                    <button onclick="showPasteDialogueModal()" class="btn-icon" title="粘贴对话">📝</button>
                     <button onclick="refreshSOAP()" class="btn-icon" title="刷新">🔄</button>
                     <button onclick="exportSOAP()" class="btn-icon" title="导出">📥</button>
                     <button onclick="endConsultationSession()" class="btn-icon btn-danger" title="结束">⏹️</button>
@@ -517,6 +518,579 @@ function escapeHtmlMode(text) {
 }
 
 // ========================================
+// 粘贴对话生成病历
+// ========================================
+function showPasteDialogueModal() {
+    // 移除已存在的模态框
+    const existing = document.getElementById('paste-dialogue-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'paste-dialogue-modal';
+    modal.className = 'paste-dialogue-modal';
+    modal.innerHTML = `
+        <div class="paste-modal-content">
+            <div class="paste-modal-header">
+                <h2>📝 粘贴对话记录</h2>
+                <button onclick="closePasteDialogueModal()" class="btn-close">✕</button>
+            </div>
+            <div class="paste-modal-body">
+                <p class="paste-hint">请粘贴医患对话记录，每行一句，格式如下：</p>
+                <div class="paste-example">
+                    <code>患者：我头疼了三天，还有点发烧</code><br>
+                    <code>医生：有没有其他症状？比如咳嗽、流鼻涕？</code><br>
+                    <code>患者：有一点咳嗽</code><br>
+                    <code>家属：他昨天晚上体温到了38.5度</code>
+                </div>
+                <textarea id="dialogue-text-input" class="dialogue-textarea" rows="10" 
+                    placeholder="在此粘贴对话记录...&#10;&#10;患者：我最近感觉头很疼&#10;医生：疼了多久了？&#10;患者：大概三天了&#10;家属：他还有点发烧"></textarea>
+            </div>
+            <div class="paste-modal-footer">
+                <button onclick="closePasteDialogueModal()" class="btn-secondary">取消</button>
+                <button onclick="generateSOAPFromText()" class="btn-primary">🏥 生成病历</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    // 聚焦到文本框
+    setTimeout(() => {
+        document.getElementById('dialogue-text-input').focus();
+    }, 100);
+}
+
+function closePasteDialogueModal() {
+    const modal = document.getElementById('paste-dialogue-modal');
+    if (modal) modal.remove();
+}
+
+async function generateSOAPFromText() {
+    const textInput = document.getElementById('dialogue-text-input');
+    const dialogueText = textInput.value.trim();
+
+    if (!dialogueText) {
+        showToast('⚠️ 请输入对话记录');
+        return;
+    }
+
+    // 显示加载状态
+    const generateBtn = document.querySelector('#paste-dialogue-modal .btn-primary');
+    const originalText = generateBtn.textContent;
+    generateBtn.textContent = '⏳ 生成中...';
+    generateBtn.disabled = true;
+
+    try {
+        const response = await fetch(`${API_BASE}/aci/generate-soap`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dialogue_text: dialogueText })
+        });
+
+        const data = await response.json();
+
+        if (data.status === 'success' && data.soap) {
+            // 关闭粘贴模态框
+            closePasteDialogueModal();
+
+            // 显示SOAP结果
+            showGeneratedSOAPModal(data.soap, dialogueText);
+
+            showToast('✅ 病历生成成功');
+        } else {
+            showToast('❌ 生成失败: ' + (data.error || '未知错误'));
+        }
+    } catch (error) {
+        console.error('生成SOAP失败:', error);
+        showToast('❌ 生成失败: ' + error.message);
+    } finally {
+        generateBtn.textContent = originalText;
+        generateBtn.disabled = false;
+    }
+}
+
+function showGeneratedSOAPModal(soap, originalText) {
+    const modal = document.createElement('div');
+    modal.className = 'soap-modal generated-soap-modal';
+
+    // 格式化SOAP内容
+    const subjective = soap.subjective || {};
+    const objective = soap.objective || {};
+    const assessment = soap.assessment || {};
+    const plan = soap.plan || {};
+    const entities = soap.entities || [];
+
+    // 提取实体标签
+    const symptoms = entities.filter(e => e.type === 'symptom').map(e => e.text);
+    const diseases = entities.filter(e => e.type === 'disease').map(e => e.text);
+    const medications = entities.filter(e => e.type === 'medication').map(e => e.text);
+
+    modal.innerHTML = `
+        <div class="soap-modal-content">
+            <div class="soap-modal-header">
+                <h2>🏥 生成的 SOAP 病历</h2>
+                <button onclick="this.closest('.soap-modal').remove()" class="btn-close">✕</button>
+            </div>
+            <div class="soap-modal-body">
+                <section class="soap-result-section">
+                    <h3>📋 S - 主诉 (Subjective)</h3>
+                    <p><strong>主诉：</strong>${subjective.chief_complaint || '未记录'}</p>
+                    ${subjective.history ? `<p><strong>病史：</strong>${subjective.history}</p>` : ''}
+                </section>
+                
+                <section class="soap-result-section">
+                    <h3>🔬 O - 客观检查 (Objective)</h3>
+                    <p><strong>生命体征：</strong>${objective.vital_signs || '待检查'}</p>
+                    <p>${objective.content || '暂无客观检查数据'}</p>
+                </section>
+                
+                <section class="soap-result-section">
+                    <h3>🩺 A - 评估 (Assessment)</h3>
+                    <p><strong>诊断：</strong>${assessment.diagnosis || '待诊断'}</p>
+                    <p>${assessment.content || ''}</p>
+                </section>
+                
+                <section class="soap-result-section">
+                    <h3>💊 P - 计划 (Plan)</h3>
+                    <p><strong>治疗方案：</strong>${plan.treatment || '待制定'}</p>
+                    <p>${plan.content || ''}</p>
+                </section>
+
+                ${entities.length > 0 ? `
+                <section class="soap-result-section entities-section">
+                    <h3>🏷️ 提取的医学实体</h3>
+                    <div class="entity-tags">
+                        ${symptoms.length > 0 ? `<div class="entity-group"><span class="entity-label">症状:</span> ${symptoms.map(s => `<span class="entity-tag symptom">${s}</span>`).join('')}</div>` : ''}
+                        ${diseases.length > 0 ? `<div class="entity-group"><span class="entity-label">疾病:</span> ${diseases.map(d => `<span class="entity-tag disease">${d}</span>`).join('')}</div>` : ''}
+                        ${medications.length > 0 ? `<div class="entity-group"><span class="entity-label">药物:</span> ${medications.map(m => `<span class="entity-tag medication">${m}</span>`).join('')}</div>` : ''}
+                    </div>
+                </section>
+                ` : ''}
+            </div>
+            <div class="soap-modal-footer">
+                <button onclick="copySOAPToClipboard(this)" class="btn-secondary" data-soap='${JSON.stringify(soap).replace(/'/g, "\\'")}'>📋 复制</button>
+                <button onclick="downloadSOAPAsMarkdown(this)" class="btn-secondary" data-soap='${JSON.stringify(soap).replace(/'/g, "\\'")}'>📥 MD</button>
+                <button onclick="downloadSOAPAsHTML(this)" class="btn-secondary" data-soap='${JSON.stringify(soap).replace(/'/g, "\\'")}'>🏥 电子病历</button>
+                <button onclick="this.closest('.soap-modal').remove()" class="btn-primary">确定</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
+function copySOAPToClipboard(btn) {
+    const soap = JSON.parse(btn.dataset.soap);
+    const text = formatSOAPAsText(soap);
+
+    navigator.clipboard.writeText(text).then(() => {
+        showToast('✅ 已复制到剪贴板');
+    }).catch(err => {
+        console.error('复制失败:', err);
+        showToast('❌ 复制失败');
+    });
+}
+
+function downloadSOAPAsMarkdown(btn) {
+    const soap = JSON.parse(btn.dataset.soap);
+    const markdown = formatSOAPAsMarkdown(soap);
+
+    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `SOAP_病历_${new Date().toISOString().slice(0, 10)}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    showToast('✅ 已导出');
+}
+
+function formatSOAPAsText(soap) {
+    const s = soap.subjective || {};
+    const o = soap.objective || {};
+    const a = soap.assessment || {};
+    const p = soap.plan || {};
+
+    return `SOAP 病历
+============
+
+【S - 主诉】
+主诉：${s.chief_complaint || '未记录'}
+${s.history ? `病史：${s.history}` : ''}
+
+【O - 客观检查】
+生命体征：${o.vital_signs || '待检查'}
+${o.content || '暂无客观检查数据'}
+
+【A - 评估】
+诊断：${a.diagnosis || '待诊断'}
+${a.content || ''}
+
+【P - 计划】
+治疗方案：${p.treatment || '待制定'}
+${p.content || ''}
+
+生成时间：${new Date().toLocaleString('zh-CN')}
+`;
+}
+
+function formatSOAPAsMarkdown(soap) {
+    const s = soap.subjective || {};
+    const o = soap.objective || {};
+    const a = soap.assessment || {};
+    const p = soap.plan || {};
+    const entities = soap.entities || [];
+
+    let md = `# SOAP 病历
+
+## S - 主诉 (Subjective)
+
+**主诉：** ${s.chief_complaint || '未记录'}
+
+${s.history ? `**病史：** ${s.history}` : ''}
+
+## O - 客观检查 (Objective)
+
+**生命体征：** ${o.vital_signs || '待检查'}
+
+${o.content || '暂无客观检查数据'}
+
+## A - 评估 (Assessment)
+
+**诊断：** ${a.diagnosis || '待诊断'}
+
+${a.content || ''}
+
+## P - 计划 (Plan)
+
+**治疗方案：** ${p.treatment || '待制定'}
+
+${p.content || ''}
+`;
+
+    if (entities.length > 0) {
+        const symptoms = entities.filter(e => e.type === 'symptom').map(e => e.text);
+        const diseases = entities.filter(e => e.type === 'disease').map(e => e.text);
+        const medications = entities.filter(e => e.type === 'medication').map(e => e.text);
+
+        md += `
+## 提取的医学实体
+
+${symptoms.length > 0 ? `- **症状：** ${symptoms.join('、')}` : ''}
+${diseases.length > 0 ? `- **疾病：** ${diseases.join('、')}` : ''}
+${medications.length > 0 ? `- **药物：** ${medications.join('、')}` : ''}
+`;
+    }
+
+    md += `
+---
+*生成时间：${new Date().toLocaleString('zh-CN')}*
+`;
+
+    return md;
+}
+
+// ========================================
+// HTML 电子病历生成
+// ========================================
+function downloadSOAPAsHTML(btn) {
+    const soap = JSON.parse(btn.dataset.soap);
+    const html = formatSOAPAsHTML(soap);
+
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `电子病历_${new Date().toISOString().slice(0, 10)}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    showToast('✅ 电子病历已导出');
+}
+
+function formatSOAPAsHTML(soap) {
+    const s = soap.subjective || {};
+    const o = soap.objective || {};
+    const a = soap.assessment || {};
+    const p = soap.plan || {};
+    const entities = soap.entities || [];
+
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('zh-CN');
+    const timeStr = now.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+
+    // 提取实体
+    const symptoms = entities.filter(e => e.type === 'symptom').map(e => e.text);
+    const diseases = entities.filter(e => e.type === 'disease').map(e => e.text);
+    const medications = entities.filter(e => e.type === 'medication').map(e => e.text);
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>电子病历 - ${dateStr}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: "SimSun", "宋体", serif;
+            font-size: 14px;
+            line-height: 1.8;
+            color: #000;
+            background: #fff;
+            padding: 20px;
+        }
+        .medical-record {
+            max-width: 800px;
+            margin: 0 auto;
+            border: 2px solid #000;
+            padding: 30px;
+        }
+        .header {
+            text-align: center;
+            border-bottom: 2px solid #000;
+            padding-bottom: 20px;
+            margin-bottom: 20px;
+        }
+        .hospital-name {
+            font-size: 24px;
+            font-weight: bold;
+            letter-spacing: 4px;
+            margin-bottom: 10px;
+        }
+        .record-title {
+            font-size: 20px;
+            font-weight: bold;
+            border: 1px solid #000;
+            display: inline-block;
+            padding: 5px 30px;
+            margin-top: 10px;
+        }
+        .patient-info {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            border-bottom: 1px solid #000;
+            padding: 15px 0;
+            margin-bottom: 20px;
+        }
+        .info-item {
+            display: flex;
+        }
+        .info-label {
+            font-weight: bold;
+            min-width: 70px;
+        }
+        .info-value {
+            border-bottom: 1px solid #000;
+            flex: 1;
+            min-width: 80px;
+            padding: 0 5px;
+        }
+        .section {
+            margin-bottom: 20px;
+            page-break-inside: avoid;
+        }
+        .section-title {
+            font-weight: bold;
+            font-size: 15px;
+            background: #f0f0f0;
+            padding: 8px 15px;
+            border-left: 4px solid #1a5f7a;
+            margin-bottom: 10px;
+        }
+        .section-content {
+            padding: 10px 15px;
+            min-height: 60px;
+            border: 1px solid #ddd;
+            background: #fafafa;
+        }
+        .content-row {
+            margin-bottom: 8px;
+        }
+        .content-label {
+            font-weight: bold;
+            color: #333;
+        }
+        .entity-tags {
+            margin-top: 10px;
+        }
+        .entity-tag {
+            display: inline-block;
+            padding: 2px 10px;
+            margin: 2px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        .entity-tag.symptom { background: #fff3cd; color: #856404; border: 1px solid #ffc107; }
+        .entity-tag.disease { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .entity-tag.medication { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .signature-area {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #000;
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+        }
+        .signature-item {
+            display: flex;
+            align-items: flex-end;
+        }
+        .signature-label {
+            font-weight: bold;
+            white-space: nowrap;
+        }
+        .signature-line {
+            flex: 1;
+            border-bottom: 1px solid #000;
+            margin-left: 10px;
+            min-width: 120px;
+        }
+        .footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 12px;
+            color: #666;
+            border-top: 1px dashed #ccc;
+            padding-top: 15px;
+        }
+        @media print {
+            body { padding: 0; }
+            .medical-record { border: none; }
+            .footer { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="medical-record">
+        <div class="header">
+            <div class="hospital-name">智 能 医 疗 助 手</div>
+            <div style="font-size: 14px; color: #666;">AI-Powered Medical Assistant</div>
+            <div class="record-title">门 诊 病 历</div>
+        </div>
+        
+        <div class="patient-info">
+            <div class="info-item">
+                <span class="info-label">就诊日期：</span>
+                <span class="info-value">${dateStr}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">就诊时间：</span>
+                <span class="info-value">${timeStr}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">病历号：</span>
+                <span class="info-value">${Math.random().toString(36).substr(2, 8).toUpperCase()}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">姓　　名：</span>
+                <span class="info-value"></span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">性　　别：</span>
+                <span class="info-value"></span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">年　　龄：</span>
+                <span class="info-value"></span>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">一、主诉及现病史 (Subjective)</div>
+            <div class="section-content">
+                <div class="content-row">
+                    <span class="content-label">主　诉：</span>
+                    ${s.chief_complaint || s.chief_complaint_text || '未记录'}
+                </div>
+                <div class="content-row">
+                    <span class="content-label">现病史：</span>
+                    ${s.history || s.history_present_illness || '未记录'}
+                </div>
+                ${symptoms.length > 0 ? `
+                <div class="entity-tags">
+                    <span class="content-label">症状标签：</span>
+                    ${symptoms.map(s => `<span class="entity-tag symptom">${s}</span>`).join('')}
+                </div>
+                ` : ''}
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">二、体格检查 (Objective)</div>
+            <div class="section-content">
+                <div class="content-row">
+                    <span class="content-label">生命体征：</span>
+                    ${o.vital_signs || '待检查'}
+                </div>
+                <div class="content-row">
+                    <span class="content-label">体格检查：</span>
+                    ${o.content || o.physical_exam || '待检查'}
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">三、诊断意见 (Assessment)</div>
+            <div class="section-content">
+                <div class="content-row">
+                    <span class="content-label">初步诊断：</span>
+                    ${a.diagnosis || (a.diagnoses && a.diagnoses.join('、')) || '待诊断'}
+                </div>
+                <div class="content-row">
+                    <span class="content-label">病情评估：</span>
+                    ${a.content || a.severity || '待评估'}
+                </div>
+                ${diseases.length > 0 ? `
+                <div class="entity-tags">
+                    <span class="content-label">疾病标签：</span>
+                    ${diseases.map(d => `<span class="entity-tag disease">${d}</span>`).join('')}
+                </div>
+                ` : ''}
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">四、治疗方案 (Plan)</div>
+            <div class="section-content">
+                <div class="content-row">
+                    <span class="content-label">治疗方案：</span>
+                    ${p.treatment || '待制定'}
+                </div>
+                <div class="content-row">
+                    <span class="content-label">医　　嘱：</span>
+                    ${p.content || p.instructions || '遵医嘱'}
+                </div>
+                ${medications.length > 0 ? `
+                <div class="entity-tags">
+                    <span class="content-label">用药建议：</span>
+                    ${medications.map(m => `<span class="entity-tag medication">${m}</span>`).join('')}
+                </div>
+                ` : ''}
+            </div>
+        </div>
+
+        <div class="signature-area">
+            <div class="signature-item">
+                <span class="signature-label">主治医师：</span>
+                <span class="signature-line"></span>
+            </div>
+            <div class="signature-item">
+                <span class="signature-label">日　　期：</span>
+                <span class="signature-line">${dateStr}</span>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>本病历由 AI 智能医疗助手辅助生成，仅供参考，不作为最终诊断依据</p>
+            <p>如有疑问请咨询专业医生 | 生成时间：${now.toLocaleString('zh-CN')}</p>
+        </div>
+    </div>
+</body>
+</html>`;
+}
+
+// ========================================
 // 导出
 // ========================================
 window.AppMode = AppMode;
@@ -527,3 +1101,9 @@ window.recordUtterance = recordUtterance;
 window.refreshSOAP = refreshSOAP;
 window.exportSOAP = exportSOAP;
 window.endConsultationSession = endConsultationSession;
+window.showPasteDialogueModal = showPasteDialogueModal;
+window.closePasteDialogueModal = closePasteDialogueModal;
+window.generateSOAPFromText = generateSOAPFromText;
+window.copySOAPToClipboard = copySOAPToClipboard;
+window.downloadSOAPAsMarkdown = downloadSOAPAsMarkdown;
+window.downloadSOAPAsHTML = downloadSOAPAsHTML;

@@ -94,6 +94,13 @@ config = {}
 # ========================================
 message_subscribers = []  # 存储所有SSE订阅者的队列
 
+# ========================================
+# 会话模式存储
+# 存储每个 session_id 的当前模式 (patient/doctor/consultation)
+# ========================================
+session_modes = {}  # {session_id: 'patient' | 'doctor' | 'consultation'}
+consultation_sessions = {}  # {session_id: ConsultationSession 实例}
+
 def broadcast_message(msg_type: str, data: dict):
     """广播消息给所有订阅者"""
     message = {
@@ -351,6 +358,12 @@ def initialize_modules():
 def index():
     """返回Web界面首页"""
     return send_from_directory('static', 'index.html')
+
+
+@app.route('/consultation')
+def consultation_page():
+    """返回会诊病历生成器页面"""
+    return send_from_directory('static', 'consultation.html')
 
 
 # ============= API路由 =============
@@ -755,17 +768,71 @@ def chat_endpoint():
         # ========================================
         # 语音命令模式切换检测
         # ========================================
+        
+        # 检测 "结束会诊" 命令
+        end_consultation_commands = ['结束会诊', '会诊结束', '生成病历', '生成SOAP']
+        text_clean = text.strip().replace(' ', '')
+        
+        for cmd in end_consultation_commands:
+            if cmd.replace(' ', '') in text_clean or text_clean in cmd.replace(' ', ''):
+                current_mode = session_modes.get(session_id, 'patient')
+                if current_mode == 'consultation' and session_id in consultation_sessions:
+                    # 生成 SOAP 病历
+                    try:
+                        consultation = consultation_sessions[session_id]
+                        soap_result = {'subjective': {}, 'objective': {}, 'assessment': {}, 'plan': {}}
+                        
+                        if soap_generator:
+                            soap_note = soap_generator.generate_soap(consultation)
+                            soap_result = soap_note.to_dict()
+                        else:
+                            # 简单规则生成
+                            utterances = [{'speaker': '患者', 'text': u.text} for u in consultation.utterances]
+                            soap_result = _generate_simple_soap(utterances, [])
+                        
+                        response_text = f"会诊已结束，病历已生成。主诉：{soap_result.get('subjective', {}).get('chief_complaint', '未记录')}。"
+                        
+                        # 清理会话
+                        del consultation_sessions[session_id]
+                        session_modes[session_id] = 'patient'
+                        logger.info(f"[Consultation] Ended session {session_id}")
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to generate SOAP: {e}")
+                        response_text = "会诊已结束，但病历生成失败。"
+                else:
+                    response_text = "当前不在会诊模式，无需结束会诊。"
+                
+                # 语音合成并返回
+                tts_result = modules['tts'].synthesize(text=response_text)
+                if tts_result.get('output_path'):
+                    from flask import make_response
+                    from urllib.parse import quote
+                    response = make_response(send_file(
+                        tts_result['output_path'], mimetype='audio/wav',
+                        as_attachment=True, download_name='response.wav'
+                    ))
+                    response.headers['X-ASR-Text'] = quote(text, safe='')
+                    response.headers['X-Response-Text'] = quote(response_text, safe='')
+                    response.headers['X-Consultation-Ended'] = 'true'
+                    return response
+                else:
+                    return jsonify({"text": response_text, "consultation_ended": True})
+        
         mode_switch_commands = {
             'patient': ['切换到患者模式', '患者模式', '切换患者模式', '进入患者模式', '我是患者'],
             'doctor': ['切换到医生模式', '医生模式', '切换医生模式', '进入医生模式', '我是医生'],
             'consultation': ['切换到会诊模式', '会诊模式', '开始会诊', '进入会诊模式', '启动会诊']
         }
         
-        text_clean = text.strip().replace(' ', '')
         for target_mode, commands in mode_switch_commands.items():
             for cmd in commands:
                 if cmd.replace(' ', '') in text_clean or text_clean in cmd.replace(' ', ''):
-                    # 检测到模式切换命令
+                    # 检测到模式切换命令 - 存储到全局会话模式
+                    old_mode = session_modes.get(session_id, 'patient')
+                    session_modes[session_id] = target_mode
+                    logger.info(f"[Mode Switch] Session {session_id}: {old_mode} -> {target_mode}")
+                    
                     mode_names = {'patient': '患者', 'doctor': '医生', 'consultation': '会诊'}
                     response_text = f"好的，已切换到{mode_names[target_mode]}模式。"
                     
@@ -775,6 +842,13 @@ def chat_endpoint():
                         response_text += "我将为您提供专业的辅助诊断建议。"
                     elif target_mode == 'consultation':
                         response_text += "会诊模式已启动，我会记录对话并生成病历。"
+                        # 创建会诊会话
+                        try:
+                            from modules.aci.consultation_session import ConsultationSession
+                            consultation_sessions[session_id] = ConsultationSession()
+                            logger.info(f"[Consultation] Created session for {session_id}")
+                        except Exception as e:
+                            logger.warning(f"Failed to create consultation session: {e}")
                     
                     # 广播消息到网页
                     broadcast_message('user_message', {'text': text, 'mode': target_mode, 'source': 'client'})
@@ -809,10 +883,54 @@ def chat_endpoint():
         # 正常对话流程
         # ========================================
         
-        # 4. 对话生成
+        # 4. 获取当前会话模式并使用对应的系统提示词
+        current_mode = session_modes.get(session_id, 'patient')
+        
+        # 模式专用的系统提示词
+        mode_prompts = {
+            'patient': """你是一个智能医疗助手，帮助患者分析症状、给出初步的健康生活建议，并建议应该挂什么科室。
+你的职责是，根据患者描述的症状，分析可能的健康问题，提供初步的日常护理建议（如休息、饮食、补水等），并建议患者应该去哪个科室就诊。
+你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求，
+只用纯中文回答，禁止英文和数字。
+只用中文逗号和句号，禁止其他标点。
+禁止使用列表和编号格式，必须写成连贯的一段话。
+态度温和友好，像一个耐心的专业护士。
+在提供建议的同时，必须告知患者这不替代医生面诊，必要时及时就医。""",
+
+            'doctor': """你是医生的AI诊断辅助助手，帮助医生分析病情、提供鉴别诊断和治疗方案建议。
+你应该使用专业的医学术语，提供基于循证医学的建议。
+你的职责包括，分析患者症状提供鉴别诊断，建议必要的检查项目，提供治疗方案参考，提示潜在的风险和禁忌症。
+你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求，
+只用纯中文回答，禁止英文和数字。
+只用中文逗号和句号，禁止其他标点。
+禁止使用列表和编号格式，必须写成连贯的一段话。
+态度专业严谨，像一个经验丰富的主治医师在与同事讨论病例。""",
+
+            'consultation': """你是会诊记录助手，正在记录医患对话。
+请简洁回应确认你正在记录，不需要提供医疗建议。
+回复简短即可，如"好的，已记录"或"继续"。"""
+        }
+        
+        system_prompt = mode_prompts.get(current_mode, mode_prompts['patient'])
+        
+        # 如果是会诊模式，记录到会诊会话
+        if current_mode == 'consultation' and session_id in consultation_sessions:
+            try:
+                consultation_sessions[session_id].add_utterance(
+                    text=text,
+                    speaker_id=speaker_result.get('speaker_id', 'unknown'),
+                    speaker_role='patient',  # 默认为患者，实际应根据声纹识别
+                    timestamp=time.time()
+                )
+                logger.info(f"[Consultation] Recorded utterance: {text[:50]}...")
+            except Exception as e:
+                logger.warning(f"Failed to record consultation utterance: {e}")
+        
+        # 对话生成（使用当前模式的系统提示词）
         dialogue_result = modules['dialogue'].chat(
             query=text,
-            session_id=session_id
+            session_id=f"{session_id}_{current_mode}",  # 不同模式使用独立历史
+            system_prompt=system_prompt
         )
         response_text = dialogue_result.get('response', '')
         
@@ -820,10 +938,10 @@ def chat_endpoint():
         tts_result = modules['tts'].synthesize(text=response_text)
         
         # 广播消息到网页
-        broadcast_message('user_message', {'text': text, 'mode': 'voice', 'source': 'client'})
+        broadcast_message('user_message', {'text': text, 'mode': current_mode, 'source': 'client'})
         broadcast_message('assistant_message', {
             'text': response_text, 
-            'mode': 'voice',
+            'mode': current_mode,
             'rag_used': dialogue_result.get('rag_used', False),
             'rag_context': dialogue_result.get('rag_context', '')
         })
@@ -1428,6 +1546,298 @@ def assess_emergency():
     except Exception as e:
         logger.error(f"Assess emergency error: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/aci/generate-soap', methods=['POST'])
+def generate_soap_from_dialogue():
+    """
+    从对话记录生成 SOAP 病历
+    
+    输入格式1 - 结构化:
+    {
+        "utterances": [
+            {"speaker": "医生", "text": "您哪里不舒服？"},
+            {"speaker": "患者", "text": "我头疼了三天，还有点发烧。"}
+        ]
+    }
+    
+    输入格式2 - 文本:
+    {
+        "dialogue_text": "患者：我头疼了三天，还有点发烧。\n医生：您有没有其他症状？"
+    }
+    """
+    try:
+        data = request.json
+        utterances = data.get('utterances', [])
+        dialogue_text = data.get('dialogue_text', '')
+        
+        # 如果提供了原始文本格式，解析为结构化格式
+        if dialogue_text and not utterances:
+            utterances = _parse_dialogue_text(dialogue_text)
+        
+        if not utterances:
+            return jsonify({"error": "缺少对话记录，请提供 utterances 参数"}), 400
+        
+        # 创建一个临时会话来存储对话
+        from modules.aci.consultation_session import ConsultationSession
+        session = ConsultationSession()
+        
+        # 角色映射
+        role_map = {
+            '医生': 'doctor',
+            '患者': 'patient',
+            '家属': 'family'
+        }
+        
+        # 添加对话记录
+        for i, utt in enumerate(utterances):
+            speaker = utt.get('speaker', '患者')
+            text = utt.get('text', '')
+            role = role_map.get(speaker, 'patient')
+            session.add_utterance(
+                text=text,
+                speaker_id=f"speaker_{role}",
+                speaker_role=role,
+                timestamp=float(i)
+            )
+        
+        # 提取实体
+        entities = []
+        if entity_extractor:
+            for utt in utterances:
+                extracted = entity_extractor.extract_entities(
+                    utt.get('text', ''),
+                    speaker_role=role_map.get(utt.get('speaker', '患者'), 'patient')
+                )
+                entities.extend([e.to_dict() for e in extracted])
+        
+        # 生成 SOAP - 直接使用 LLM 生成
+        print(f"\n[DEBUG] 开始SOAP生成，对话轮数: {len(utterances)}")
+        soap_result = _generate_simple_soap(utterances, entities)
+        
+        return jsonify({
+            "status": "success",
+            "soap": soap_result
+        })
+        
+    except Exception as e:
+        logger.error(f"Generate SOAP error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+def _parse_dialogue_text(dialogue_text: str) -> list:
+    """
+    解析对话文本为结构化格式
+    
+    支持的格式:
+    - 患者：我头疼了三天
+    - 医生: 有没有发烧？
+    - 家属：他昨天开始的
+    
+    每行一句，或者用换行符分隔
+    """
+    import re
+    
+    utterances = []
+    
+    # 按行分割
+    lines = dialogue_text.strip().split('\n')
+    
+    # 支持的角色前缀
+    role_patterns = [
+        (r'^患者[：:\s]+(.+)$', '患者'),
+        (r'^病人[：:\s]+(.+)$', '患者'),
+        (r'^医生[：:\s]+(.+)$', '医生'),
+        (r'^大夫[：:\s]+(.+)$', '医生'),
+        (r'^家属[：:\s]+(.+)$', '家属'),
+        (r'^护士[：:\s]+(.+)$', '医生'),  # 护士归类为医疗方
+    ]
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        
+        matched = False
+        for pattern, speaker in role_patterns:
+            match = re.match(pattern, line)
+            if match:
+                text = match.group(1).strip()
+                if text:
+                    utterances.append({
+                        'speaker': speaker,
+                        'text': text
+                    })
+                matched = True
+                break
+        
+        # 如果没有匹配到角色前缀，默认为患者
+        if not matched and line:
+            utterances.append({
+                'speaker': '患者',
+                'text': line
+            })
+    
+    return utterances
+
+
+def _generate_simple_soap(utterances, entities):
+    """
+    完全使用大模型生成 SOAP 病历和提取实体
+    """
+    dialogue_module = modules.get('dialogue')
+    
+    # 构建对话转录
+    transcript_lines = []
+    for utt in utterances:
+        speaker = utt.get('speaker', '患者')
+        text = utt.get('text', '')
+        transcript_lines.append(f"{speaker}：{text}")
+    transcript = "\n".join(transcript_lines)
+    
+    logger.info(f"[SOAP] 开始生成，对话轮数: {len(utterances)}, LLM可用: {dialogue_module is not None}")
+    
+    if dialogue_module and len(utterances) > 0:
+        try:
+            # 简化的提示词，让模型更容易遵循
+            prompt = f"""分析以下医患对话，生成病历报告。
+
+对话内容：
+{transcript}
+
+请直接输出以下格式的病历（不要输出其他内容）：
+
+主诉：[患者的主要症状和持续时间]
+现病史：[症状发展过程的描述]
+生命体征：[体温、血压等检查数据，如果对话中没有就写"待检查"]
+体格检查：[医生检查发现，如果没有就写"待检查"]
+诊断：[医生给出的诊断，如果没有就写"待诊断"]
+病情评估：[对病情的分析]
+治疗方案：[开的药物和治疗方法]
+医嘱：[医生的建议和随访要求]
+症状：[从对话中提取的所有症状，用逗号分隔]
+疾病：[从对话中提取的疾病名称，用逗号分隔]
+药物：[从对话中提取的药物名称，用逗号分隔]"""
+
+            result = dialogue_module.chat(
+                query=prompt,
+                session_id="soap_generation",
+                reset=True,
+                use_rag=False
+            )
+            
+            response_text = result.get('response', '')
+            logger.info(f"[SOAP] LLM响应长度: {len(response_text)}")
+            print(f"\n{'='*50}")
+            print(f"[SOAP] LLM响应内容:")
+            print(response_text)
+            print(f"{'='*50}\n")
+            
+            if response_text:
+                # 解析文本格式的响应
+                soap_result = _parse_soap_text(response_text)
+                soap_result['generated_by'] = 'llm'
+                logger.info("[SOAP] 成功使用大模型生成病历")
+                return soap_result
+                
+        except Exception as e:
+            logger.error(f"[SOAP] LLM生成失败: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # 回退：从对话中提取基本信息
+    logger.info("[SOAP] 使用回退规则生成")
+    patient_texts = [utt.get('text', '') for utt in utterances if utt.get('speaker') == '患者']
+    doctor_texts = [utt.get('text', '') for utt in utterances if utt.get('speaker') == '医生']
+    
+    return {
+        'subjective': {
+            'chief_complaint': patient_texts[0] if patient_texts else '未记录',
+            'history': ' '.join(patient_texts[1:3]) if len(patient_texts) > 1 else ''
+        },
+        'objective': {
+            'vital_signs': '待检查',
+            'content': '待检查'
+        },
+        'assessment': {
+            'diagnosis': '待诊断',
+            'content': '待评估'
+        },
+        'plan': {
+            'treatment': '待制定',
+            'content': ''
+        },
+        'entities': entities,
+        'generated_by': 'rules'
+    }
+
+
+def _parse_soap_text(text):
+    """解析LLM生成的文本格式SOAP"""
+    result = {
+        'subjective': {'chief_complaint': '', 'history': ''},
+        'objective': {'vital_signs': '', 'content': ''},
+        'assessment': {'diagnosis': '', 'content': ''},
+        'plan': {'treatment': '', 'content': ''},
+        'entities': []
+    }
+    
+    # 提取各字段 - 支持逗号/句号/换行分隔的格式
+    # LLM可能返回 "主诉，头痛..." 或 "主诉：头痛..." 格式
+    patterns = {
+        'chief_complaint': r'主诉[，,：:]\s*(.+?)(?=现病史|生命体征|体格检查|诊断|$)',
+        'history': r'现病史[，,：:]\s*(.+?)(?=生命体征|体格检查|诊断|病情评估|$)',
+        'vital_signs': r'生命体征[，,：:]\s*(.+?)(?=体格检查|诊断|病情评估|$)',
+        'physical_exam': r'体格检查[，,：:]\s*(.+?)(?=诊断|病情评估|治疗|$)',
+        'diagnosis': r'诊断[，,：:]\s*(.+?)(?=病情评估|治疗方案|医嘱|$)',
+        'assessment_content': r'病情评估[，,：:]\s*(.+?)(?=治疗方案|医嘱|症状|$)',
+        'treatment': r'治疗方案[，,：:]\s*(.+?)(?=医嘱|症状|疾病|$)',
+        'instructions': r'医嘱[，,：:]\s*(.+?)(?=症状|疾病|药物|$)',
+        'symptoms': r'症状[，,：:]\s*(.+?)(?=疾病|药物|$)',
+        'diseases': r'疾病[，,：:]\s*(.+?)(?=药物|$)',
+        'medications': r'药物[，,：:]\s*(.+?)$'
+    }
+    
+    import re
+    for key, pattern in patterns.items():
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            value = match.group(1).strip()
+            if key == 'chief_complaint':
+                result['subjective']['chief_complaint'] = value
+            elif key == 'history':
+                result['subjective']['history'] = value
+            elif key == 'vital_signs':
+                result['objective']['vital_signs'] = value
+            elif key == 'physical_exam':
+                result['objective']['content'] = value
+            elif key == 'diagnosis':
+                result['assessment']['diagnosis'] = value
+            elif key == 'assessment_content':
+                result['assessment']['content'] = value
+            elif key == 'treatment':
+                result['plan']['treatment'] = value
+            elif key == 'instructions':
+                result['plan']['content'] = value
+            elif key == 'symptoms':
+                for s in value.split('，'):
+                    s = s.strip().replace('、', '').replace(',', '')
+                    if s and len(s) >= 2:
+                        result['entities'].append({'type': 'symptom', 'text': s})
+            elif key == 'diseases':
+                for d in value.split('，'):
+                    d = d.strip().replace('、', '').replace(',', '')
+                    if d and len(d) >= 2:
+                        result['entities'].append({'type': 'disease', 'text': d})
+            elif key == 'medications':
+                for m in value.split('，'):
+                    m = m.strip().replace('、', '').replace(',', '')
+                    if m and len(m) >= 2:
+                        result['entities'].append({'type': 'medication', 'text': m})
+    
+    return result
 
 
 @app.route('/aci/status', methods=['GET'])

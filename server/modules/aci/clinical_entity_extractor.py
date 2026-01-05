@@ -193,21 +193,77 @@ class ClinicalEntityExtractor:
         r"(理疗|针灸|推拿|按摩)"
     ]
     
-    def __init__(self, knowledge_graph=None, dialogue_module=None):
+    def __init__(self, knowledge_graph=None, dialogue_module=None, dict_dir=None):
         """
         初始化实体抽取器
         
         Args:
             knowledge_graph: 知识图谱模块（用于实体链接）
             dialogue_module: 对话模块（用于 LLM 增强抽取）
+            dict_dir: 词典目录路径
         """
         self.kg = knowledge_graph
         self.llm = dialogue_module
         
+        # 词典集合（用于快速匹配）
+        self.dictionaries = {
+            'symptom': set(),
+            'disease': set(),
+            'medication': set(),
+            'procedure': set()  # 检查项目
+        }
+        
+        # 加载词典
+        self._load_dictionaries(dict_dir)
+        
         # 编译正则表达式
         self._compile_patterns()
         
-        logger.info("[临床实体抽取] 初始化完成")
+        logger.info(f"[临床实体抽取] 初始化完成，词典规模: 症状{len(self.dictionaries['symptom'])}个, "
+                   f"疾病{len(self.dictionaries['disease'])}个, 药物{len(self.dictionaries['medication'])}个, "
+                   f"检查{len(self.dictionaries['procedure'])}个")
+    
+    # 停用词列表（这些词不应被识别为实体）
+    STOPWORDS = {
+        '医生', '患者', '病人', '护士', '家属', '病历', '检查', '治疗',
+        '症状', '疾病', '药物', '诊断', '医院', '科室', '门诊', '住院',
+        '好的', '谢谢', '请问', '您好', '不是', '可以', '需要', '建议',
+        '大概', '一下', '怎么', '什么', '为什么', '如果', '或者', '还有',
+        '因为', '所以', '但是', '虽然', '然后', '现在', '以前', '之后'
+    }
+    
+    def _load_dictionaries(self, dict_dir=None):
+        """从文件加载医学词典"""
+        import os
+        
+        # 默认词典目录
+        if dict_dir is None:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            dict_dir = os.path.join(current_dir, '..', '..', 'data', 'dict')
+        
+        # 词典文件映射
+        dict_files = {
+            'symptom': 'symptom.txt',
+            'disease': 'disease.txt',
+            'medication': 'drug.txt',
+            'procedure': 'check.txt'
+        }
+        
+        for entity_type, filename in dict_files.items():
+            filepath = os.path.join(dict_dir, filename)
+            if os.path.exists(filepath):
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            term = line.strip()
+                            # 过滤条件：长度适中，不在停用词中
+                            if 2 <= len(term) <= 20 and term not in self.STOPWORDS:
+                                self.dictionaries[entity_type].add(term)
+                    logger.info(f"[词典] 加载 {filename}: {len(self.dictionaries[entity_type])} 条")
+                except Exception as e:
+                    logger.warning(f"[词典] 加载 {filename} 失败: {e}")
+            else:
+                logger.warning(f"[词典] 文件不存在: {filepath}")
     
     def _compile_patterns(self):
         """编译所有正则表达式模式"""
@@ -237,33 +293,60 @@ class ClinicalEntityExtractor:
         """
         entities = []
         
-        # 对每种实体类型进行匹配
+        # 1. 词典匹配（高覆盖率）
+        for entity_type, dictionary in self.dictionaries.items():
+            for term in dictionary:
+                if term in text:
+                    # 找到所有匹配位置
+                    start = 0
+                    while True:
+                        pos = text.find(term, start)
+                        if pos == -1:
+                            break
+                        
+                        entity = ClinicalEntity(
+                            text=term,
+                            type=entity_type,
+                            normalized=self._normalize_entity(term, entity_type),
+                            source_offset=(pos, pos + len(term)),
+                            confidence=0.95,  # 词典匹配的高置信度
+                            speaker_role=speaker_role
+                        )
+                        entities.append(entity)
+                        start = pos + len(term)
+        
+        # 2. 正则匹配（补充词典未覆盖的模式）
         for entity_type, patterns in self.compiled_patterns.items():
             for pattern in patterns:
                 for match in pattern.finditer(text):
                     entity_text = match.group(0)
                     
-                    # 尝试从知识图谱获取标准化名称
-                    normalized = self._normalize_entity(entity_text, entity_type)
+                    # 检查是否已被词典匹配
+                    already_matched = any(
+                        e.text == entity_text and e.type == entity_type 
+                        for e in entities
+                    )
+                    if already_matched:
+                        continue
                     
                     entity = ClinicalEntity(
                         text=entity_text,
                         type=entity_type,
-                        normalized=normalized,
+                        normalized=self._normalize_entity(entity_text, entity_type),
                         source_offset=(match.start(), match.end()),
-                        confidence=0.9,  # 基于规则的置信度
+                        confidence=0.85,  # 正则匹配的置信度
                         speaker_role=speaker_role
                     )
-                    
-                    # 提取相关属性
-                    entity.attributes = self._extract_attributes(text, entity_text, entity_type)
-                    
                     entities.append(entity)
         
-        # 去重（同一位置的实体只保留一个）
+        # 3. 提取属性（剂量、频率等）
+        for entity in entities:
+            entity.attributes = self._extract_attributes(text, entity.text, entity.type)
+        
+        # 4. 去重（同一位置的实体只保留一个）
         entities = self._deduplicate_entities(entities)
         
-        # 关联药物和剂量
+        # 5. 关联药物和剂量
         entities = self._associate_medication_dosage(text, entities)
         
         return entities
@@ -351,17 +434,36 @@ class ClinicalEntityExtractor:
         return attributes
     
     def _deduplicate_entities(self, entities: List[ClinicalEntity]) -> List[ClinicalEntity]:
-        """去除重复实体"""
-        seen = set()
-        unique_entities = []
-        
+        """
+        去除重复实体
+        - 同一个词的多次出现只保留一次
+        - 如果长词包含短词（如"偏头痛"包含"头痛"），优先保留长词
+        """
+        # 按 (text, type) 去重，保留第一次出现的
+        seen_text_type = {}
         for entity in entities:
-            key = (entity.text, entity.type, entity.source_offset)
-            if key not in seen:
-                seen.add(key)
-                unique_entities.append(entity)
+            key = (entity.text, entity.type)
+            if key not in seen_text_type:
+                seen_text_type[key] = entity
         
-        return unique_entities
+        unique_entities = list(seen_text_type.values())
+        
+        # 处理包含关系：如果 A 包含 B 且类型相同，删除 B
+        # 例如：保留"偏头痛"，删除"头痛"
+        final_entities = []
+        for entity in unique_entities:
+            is_substring = False
+            for other in unique_entities:
+                if (entity.type == other.type and 
+                    entity.text != other.text and 
+                    entity.text in other.text and
+                    len(other.text) > len(entity.text)):
+                    is_substring = True
+                    break
+            if not is_substring:
+                final_entities.append(entity)
+        
+        return final_entities
     
     def _associate_medication_dosage(self, text: str, 
                                       entities: List[ClinicalEntity]) -> List[ClinicalEntity]:
