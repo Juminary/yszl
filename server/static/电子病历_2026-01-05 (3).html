@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>电子病历 - 2026/1/5</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: "SimSun", "宋体", serif;
+            font-size: 14px;
+            line-height: 1.8;
+            color: #000;
+            background: #fff;
+            padding: 20px;
+        }
+        .medical-record {
+            max-width: 800px;
+            margin: 0 auto;
+            border: 2px solid #000;
+            padding: 30px;
+        }
+        .header {
+            text-align: center;
+            border-bottom: 2px solid #000;
+            padding-bottom: 20px;
+            margin-bottom: 20px;
+        }
+        .hospital-name {
+            font-size: 24px;
+            font-weight: bold;
+            letter-spacing: 4px;
+            margin-bottom: 10px;
+        }
+        .record-title {
+            font-size: 20px;
+            font-weight: bold;
+            border: 1px solid #000;
+            display: inline-block;
+            padding: 5px 30px;
+            margin-top: 10px;
+        }
+        .patient-info {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            border-bottom: 1px solid #000;
+            padding: 15px 0;
+            margin-bottom: 20px;
+        }
+        .info-item {
+            display: flex;
+        }
+        .info-label {
+            font-weight: bold;
+            min-width: 70px;
+        }
+        .info-value {
+            border-bottom: 1px solid #000;
+            flex: 1;
+            min-width: 80px;
+            padding: 0 5px;
+        }
+        .section {
+            margin-bottom: 20px;
+            page-break-inside: avoid;
+        }
+        .section-title {
+            font-weight: bold;
+            font-size: 15px;
+            background: #f0f0f0;
+            padding: 8px 15px;
+            border-left: 4px solid #1a5f7a;
+            margin-bottom: 10px;
+        }
+        .section-content {
+            padding: 10px 15px;
+            min-height: 60px;
+            border: 1px solid #ddd;
+            background: #fafafa;
+        }
+        .content-row {
+            margin-bottom: 8px;
+        }
+        .content-label {
+            font-weight: bold;
+            color: #333;
+        }
+        .entity-tags {
+            margin-top: 10px;
+        }
+        .entity-tag {
+            display: inline-block;
+            padding: 2px 10px;
+            margin: 2px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        .entity-tag.symptom { background: #fff3cd; color: #856404; border: 1px solid #ffc107; }
+        .entity-tag.disease { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .entity-tag.medication { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .signature-area {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #000;
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+        }
+        .signature-item {
+            display: flex;
+            align-items: flex-end;
+        }
+        .signature-label {
+            font-weight: bold;
+            white-space: nowrap;
+        }
+        .signature-line {
+            flex: 1;
+            border-bottom: 1px solid #000;
+            margin-left: 10px;
+            min-width: 120px;
+        }
+        .footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 12px;
+            color: #666;
+            border-top: 1px dashed #ccc;
+            padding-top: 15px;
+        }
+        @media print {
+            body { padding: 0; }
+            .medical-record { border: none; }
+            .footer { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="medical-record">
+        <div class="header">
+            <div class="hospital-name">智 能 医 疗 助 手</div>
+            <div style="font-size: 14px; color: #666;">AI-Powered Medical Assistant</div>
+            <div class="record-title">门 诊 病 历</div>
+        </div>
+        
+        <div class="patient-info">
+            <div class="info-item">
+                <span class="info-label">就诊日期：</span>
+                <span class="info-value">2026/1/5</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">就诊时间：</span>
+                <span class="info-value">15:05</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">病历号：</span>
+                <span class="info-value">JKS97HZK</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">姓　　名：</span>
+                <span class="info-value"></span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">性　　别：</span>
+                <span class="info-value"></span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">年　　龄：</span>
+                <span class="info-value"></span>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">一、主诉及现病史 (Subjective)</div>
+            <div class="section-content">
+                <div class="content-row">
+                    <span class="content-label">主　诉：</span>
+                    头痛伴随发热、咽喉充血、扁桃体肿大、颈淋巴结肿大。
+                </div>
+                <div class="content-row">
+                    <span class="content-label">现病史：</span>
+                    38。5℃，2天前开始出现头痛，左侧太阳穴位置胀痛，每次持续约半小时至1小时，未伴有恶心、呕吐或视物模糊。
+                </div>
+                
+                <div class="entity-tags">
+                    <span class="content-label">症状标签：</span>
+                    <span class="entity-tag symptom">头痛发热咽喉充血扁桃体肿大颈部淋巴结肿大等症状。</span>
+                </div>
+                
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">二、体格检查 (Objective)</div>
+            <div class="section-content">
+                <div class="content-row">
+                    <span class="content-label">生命体征：</span>
+                    血压135/85mmHg，无明显不适。
+                </div>
+                <div class="content-row">
+                    <span class="content-label">体格检查：</span>
+                    双侧眼睑水肿，咽部充血，扁桃体一度肿大，颈部无压痛，瞳孔等大等圆，对光反射灵敏。
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">三、诊断意见 (Assessment)</div>
+            <div class="section-content">
+                <div class="content-row">
+                    <span class="content-label">初步诊断：</span>
+                    上呼吸道感染，疑似偏头痛及高血压性头痛。
+                </div>
+                <div class="content-row">
+                    <span class="content-label">病情评估：</span>
+                    头痛为急性发作，伴发热，需要及时处理以缓解
+                </div>
+                
+                <div class="entity-tags">
+                    <span class="content-label">疾病标签：</span>
+                    <span class="entity-tag disease">偏头痛高血压性头痛。</span>
+                </div>
+                
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">四、治疗方案 (Plan)</div>
+            <div class="section-content">
+                <div class="content-row">
+                    <span class="content-label">治疗方案：</span>
+                    口服布洛芬缓释片，静脉注射氨氯地平0。4mg，每4小时一次，口服阿司匹林300mg，每日二次，局部冷敷减轻红肿，保持充足水分摄入，避免过度劳累和外出。
+                </div>
+                <div class="content-row">
+                    <span class="content-label">医　　嘱：</span>
+                    一周内复查，如有头痛加重或视力模糊立即就医。
+                </div>
+                
+            </div>
+        </div>
+
+        <div class="signature-area">
+            <div class="signature-item">
+                <span class="signature-label">主治医师：</span>
+                <span class="signature-line"></span>
+            </div>
+            <div class="signature-item">
+                <span class="signature-label">日　　期：</span>
+                <span class="signature-line">2026/1/5</span>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>本病历由 AI 智能医疗助手辅助生成，仅供参考，不作为最终诊断依据</p>
+            <p>如有疑问请咨询专业医生 | 生成时间：2026/1/5 15:05:06</p>
+        </div>
+    </div>
+</body>
+</html>
