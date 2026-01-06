@@ -762,10 +762,9 @@ class VoiceAssistantClient:
             return
         
         print("\n可用命令:")
-        print("  talk     - 语音对话（麦克风输入）")
-        print("  text     - 文字对话（单次）")
-        print("  chat     - 连续文字对话")
-        print("  asr      - TTS+ASR测试（文字转语音后发服务器）")
+        print("  chat     - 语音对话（麦克风输入）")
+        print("  dia      - 连续文字对话")
+        print("  tchat    - TTS+ASR测试（文字转语音后发服务器）")
         print("  register - 注册声纹")
         print("  speakers - 查看已注册的说话人（需要服务器支持）")
         print("  quit     - 退出")
@@ -779,16 +778,13 @@ class VoiceAssistantClient:
                     print("再见！")
                     break
                     
-                elif command == 'talk' or command == 't':
+                elif command == 'chat' or command == 'c':
                     self.voice_chat_loop()
                 
-                elif command == 'text' or command == 'x':
-                    self.text_chat()
-                
-                elif command == 'chat' or command == 'c':
+                elif command == 'dia' or command == 'd':
                     self.text_chat_loop()
                 
-                elif command == 'asr' or command == 'a':
+                elif command == 'tchat' or command == 'tc':
                     self.tts_then_asr_chat()
                     
                 elif command == 'register' or command == 'r':

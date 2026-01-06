@@ -12,110 +12,92 @@
 
 <body>
     <div class="app-container">
-        <!-- 侧边栏 -->
-        <aside class="sidebar">
+        <!-- 头部 -->
+        <header class="app-header">
             <div class="logo">
                 <span class="logo-icon">🏥</span>
-                <h1>医疗助手</h1>
+                <h1>智能医疗语音助手</h1>
             </div>
+            <div class="mode-switcher">
+                <button class="mode-btn active" data-mode="patient">
+                    <span>👤</span> 患者模式
+                </button>
+                <button class="mode-btn" data-mode="doctor">
+                    <span>🩺</span> 医生模式
+                </button>
+                <button class="mode-btn" data-mode="consultation">
+                    <span>📋</span> 会诊模式
+                </button>
+            </div>
+        </header>
 
-            <!-- 识别结果面板 -->
-            <div class="recognition-panel">
-                <h3>🎯 识别结果</h3>
-
-
-
-                <div class="result-card" id="emotion-result">
-                    <div class="result-header">
-                        <span class="result-icon">😊</span>
-                        <span class="result-label">情感识别</span>
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <!-- 患者/医生模式：对话界面 -->
+            <div class="chat-panel" id="chat-panel">
+                <div class="chat-messages" id="chat-messages">
+                    <div class="welcome-message">
+                        <div class="welcome-icon">👋</div>
+                        <h3>欢迎使用智能医疗语音助手</h3>
+                        <p id="mode-description">请描述您的症状，我会为您提供初步的导诊建议。</p>
                     </div>
-                    <div class="result-content">
-                        <span class="emotion-badge" id="emotion-badge">未知</span>
-                        <span class="emotion-score" id="emotion-score"></span>
+                </div>
+
+                <div class="chat-input-area">
+                    <div class="text-input-row">
+                        <textarea id="text-input" placeholder="输入您的症状描述..." rows="1"></textarea>
+                        <button id="send-btn" class="send-btn" title="发送">
+                            <span>📤</span>
+                        </button>
                     </div>
-                </div>
-
-                <div class="result-card" id="speaker-result">
-                    <div class="result-header">
-                        <span class="result-icon">👤</span>
-                        <span class="result-label">声纹识别</span>
-                    </div>
-                    <div class="result-content" id="speaker-text">未识别</div>
-                </div>
-            </div>
-
-            <!-- RAG 上下文面板 -->
-            <div class="rag-panel" id="rag-panel">
-                <h3>📚 医学知识检索</h3>
-                <div class="rag-status" id="rag-status">
-                    <span class="rag-indicator inactive"></span>
-                    <span>等待查询...</span>
-                </div>
-                <div class="rag-content" id="rag-content"></div>
-            </div>
-
-            <!-- 声纹注册 -->
-            <div class="speaker-register-panel">
-                <h3>✍️ 声纹注册</h3>
-                <div class="register-form">
-                    <input type="text" id="speaker-id-input" placeholder="输入姓名或ID">
-                    <button id="register-btn" class="btn-secondary">注册声纹</button>
-                </div>
-            </div>
-        </aside>
-
-        <!-- 主聊天区域 -->
-        <main class="chat-main">
-            <header class="chat-header">
-                <h2>💬 对话窗口</h2>
-                <div class="header-actions">
-                    <button id="clear-history-btn" class="btn-icon" title="清除对话历史">🗑️</button>
-                    <button id="settings-btn" class="btn-icon" title="设置">⚙️</button>
-                </div>
-            </header>
-
-            <div class="chat-messages" id="chat-messages">
-                <div class="welcome-message">
-                    <div class="welcome-icon">👋</div>
-                    <h3>欢迎使用智能医疗语音助手</h3>
-                    <p>您可以通过语音或文字向我描述您的症状，我会为您提供初步的导诊建议。</p>
-                    <div class="quick-tips">
-                        <span class="tip">💡 点击下方麦克风开始录音</span>
-                        <span class="tip">⌨️ 或在输入框中输入文字</span>
+                    <div class="voice-input-row">
+                        <button id="record-btn" class="record-btn">
+                            <span class="record-icon">🎙️</span>
+                            <span class="record-text">点击录音</span>
+                        </button>
+                        <div class="recording-status" id="recording-status">
+                            <div class="wave"></div>
+                            <div class="wave"></div>
+                            <div class="wave"></div>
+                            <span>正在录音...</span>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <div class="chat-input-area">
-                <div class="input-container">
-                    <textarea id="text-input" placeholder="输入您的症状描述..." rows="1"></textarea>
-                    <button id="send-text-btn" class="btn-send" title="发送文字">
-                        <span>📤</span>
+            <!-- 会诊模式：病历生成界面 -->
+            <div class="consultation-panel" id="consultation-panel" style="display: none;">
+                <div class="consultation-input">
+                    <h3>📝 粘贴医患对话</h3>
+                    <textarea id="dialogue-input"
+                        placeholder="请粘贴医患对话内容...&#10;&#10;例如：&#10;患者：医生，我最近头疼得厉害。&#10;医生：头疼持续多久了？&#10;患者：大概三天了，主要是额头和太阳穴位置。"></textarea>
+                    <button id="generate-soap-btn" class="generate-btn">
+                        <span>📋</span> 生成 SOAP 病历
                     </button>
                 </div>
-
-                <div class="voice-controls">
-                    <button id="record-btn" class="record-button" title="按住录音">
-                        <span class="record-icon">🎙️</span>
-                        <span class="record-text">点击录音</span>
-                    </button>
-                    <div class="recording-indicator" id="recording-indicator">
-                        <div class="wave"></div>
-                        <div class="wave"></div>
-                        <div class="wave"></div>
-                        <span>正在录音...</span>
+                <div class="consultation-output">
+                    <h3>📄 生成的病历</h3>
+                    <div id="soap-result" class="soap-result">
+                        <p class="placeholder-text">病历将显示在这里...</p>
                     </div>
+                    <button id="copy-soap-btn" class="copy-btn" style="display: none;">
+                        <span>📋</span> 复制病历
+                    </button>
                 </div>
             </div>
         </main>
+
+        <!-- 状态栏 -->
+        <footer class="status-bar">
+            <span class="status-item" id="mode-status">🟢 患者模式</span>
+            <span class="status-item" id="connection-status">🔗 连接中...</span>
+        </footer>
     </div>
 
-    <!-- 音频播放器（隐藏） -->
+    <!-- 音频播放器 -->
     <audio id="audio-player" style="display: none;"></audio>
 
     <script src="/static/app.js"></script>
-    <script src="/static/doctor_mode.js"></script>
 </body>
 
 </html>

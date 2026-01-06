@@ -1,54 +1,4 @@
-/* ========================================
-   智能医疗语音助手 - 现代化 UI 样式
-   ======================================== */
-
-:root {
-    /* 主色调 - 医疗主题深色 */
-    --primary-color: #00b4d8;
-    --primary-dark: #0077b6;
-    --primary-light: #90e0ef;
-
-    /* 背景色 */
-    --bg-dark: #0a1628;
-    --bg-card: rgba(255, 255, 255, 0.05);
-    --bg-card-hover: rgba(255, 255, 255, 0.08);
-    --bg-input: rgba(255, 255, 255, 0.1);
-
-    /* 文字色 */
-    --text-primary: #ffffff;
-    --text-secondary: rgba(255, 255, 255, 0.7);
-    --text-muted: rgba(255, 255, 255, 0.5);
-
-    /* 状态色 */
-    --success: #00c853;
-    --warning: #ffab00;
-    --error: #ff5252;
-    --info: #00b0ff;
-
-    /* 情感颜色 */
-    --emotion-neutral: #78909c;
-    --emotion-happy: #4caf50;
-    --emotion-sad: #2196f3;
-    --emotion-angry: #f44336;
-    --emotion-fear: #9c27b0;
-    --emotion-surprise: #ff9800;
-
-    /* 尺寸 */
-    --sidebar-width: 340px;
-    --header-height: 60px;
-    --border-radius: 12px;
-    --border-radius-sm: 8px;
-
-    /* 阴影 */
-    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
-    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
-    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
-
-    /* 动画 */
-    --transition-fast: 0.15s ease;
-    --transition-normal: 0.3s ease;
-}
-
+/* 基础样式重置 */
 * {
     margin: 0;
     padding: 0;
@@ -57,56 +7,36 @@
 
 body {
     font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
-    background: var(--bg-dark);
-    color: var(--text-primary);
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: #e8e8e8;
     min-height: 100vh;
     overflow: hidden;
 }
 
-/* 背景动画效果 */
-body::before {
-    content: '';
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background:
-        radial-gradient(circle at 20% 80%, rgba(0, 180, 216, 0.15) 0%, transparent 50%),
-        radial-gradient(circle at 80% 20%, rgba(0, 119, 182, 0.15) 0%, transparent 50%),
-        radial-gradient(circle at 40% 40%, rgba(144, 224, 239, 0.08) 0%, transparent 40%);
-    pointer-events: none;
-    z-index: 0;
-}
-
+/* 应用容器 */
 .app-container {
     display: flex;
+    flex-direction: column;
     height: 100vh;
-    position: relative;
-    z-index: 1;
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 1rem;
 }
 
-/* ========================================
-   侧边栏样式
-   ======================================== */
-.sidebar {
-    width: var(--sidebar-width);
-    background: rgba(10, 22, 40, 0.95);
-    backdrop-filter: blur(20px);
-    border-right: 1px solid rgba(255, 255, 255, 0.1);
+/* 头部 */
+.app-header {
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
-    padding: 20px;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .logo {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding-bottom: 20px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    margin-bottom: 20px;
+    gap: 0.5rem;
 }
 
 .logo-icon {
@@ -114,380 +44,113 @@ body::before {
 }
 
 .logo h1 {
-    font-size: 1.4rem;
-    font-weight: 600;
-    background: linear-gradient(135deg, var(--primary-light), var(--primary-color));
+    font-size: 1.5rem;
+    font-weight: 500;
+    background: linear-gradient(90deg, #00d9ff, #00ff88);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
 }
 
-/* 识别结果面板 */
-.recognition-panel {
-    margin-bottom: 24px;
+/* 模式切换器 */
+.mode-switcher {
+    display: flex;
+    gap: 0.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 0.25rem;
+    border-radius: 12px;
 }
 
-.recognition-panel h3,
-.rag-panel h3,
-.speaker-register-panel h3 {
-    font-size: 0.95rem;
+.mode-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.25rem;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: #888;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.mode-btn:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.mode-btn.active {
+    background: linear-gradient(135deg, #00d9ff, #00ff88);
+    color: #1a1a2e;
     font-weight: 500;
-    color: var(--text-secondary);
-    margin-bottom: 12px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
 }
 
-.result-card {
-    background: var(--bg-card);
-    border-radius: var(--border-radius-sm);
-    padding: 14px;
-    margin-bottom: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    transition: all var(--transition-normal);
-}
-
-.result-card:hover {
-    background: var(--bg-card-hover);
-    border-color: rgba(0, 180, 216, 0.3);
-}
-
-.result-card.active {
-    border-color: var(--primary-color);
-    box-shadow: 0 0 20px rgba(0, 180, 216, 0.2);
-}
-
-.result-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-}
-
-.result-icon {
+.mode-btn span {
     font-size: 1.1rem;
 }
 
-.result-label {
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-    font-weight: 500;
-}
-
-.result-content {
-    font-size: 0.95rem;
-    color: var(--text-primary);
-    word-break: break-word;
-}
-
-/* 情感标签 */
-.emotion-badge {
-    display: inline-block;
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 0.85rem;
-    font-weight: 500;
-    background: var(--emotion-neutral);
-    color: white;
-    transition: all var(--transition-normal);
-}
-
-.emotion-badge.happy {
-    background: var(--emotion-happy);
-}
-
-.emotion-badge.sad {
-    background: var(--emotion-sad);
-}
-
-.emotion-badge.angry {
-    background: var(--emotion-angry);
-}
-
-.emotion-badge.fear {
-    background: var(--emotion-fear);
-}
-
-.emotion-badge.surprise {
-    background: var(--emotion-surprise);
-}
-
-.emotion-badge.neutral {
-    background: var(--emotion-neutral);
-}
-
-.emotion-score {
-    font-size: 0.8rem;
-    color: var(--text-muted);
-    margin-left: 8px;
-}
-
-/* RAG 面板 */
-.rag-panel {
-    flex: 1;
-    min-height: 200px;
-    display: flex;
-    flex-direction: column;
-    margin-bottom: 20px;
-}
-
-.rag-status {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-    margin-bottom: 12px;
-}
-
-.rag-indicator {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--text-muted);
-    transition: all var(--transition-normal);
-}
-
-.rag-indicator.active {
-    background: var(--success);
-    box-shadow: 0 0 10px var(--success);
-    animation: pulse 1.5s infinite;
-}
-
-.rag-indicator.inactive {
-    background: var(--text-muted);
-}
-
-@keyframes pulse {
-
-    0%,
-    100% {
-        opacity: 1;
-    }
-
-    50% {
-        opacity: 0.5;
-    }
-}
-
-.rag-content {
-    flex: 1;
-    background: var(--bg-card);
-    border-radius: var(--border-radius-sm);
-    padding: 12px;
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-    overflow-y: auto;
-    max-height: 300px;
-    line-height: 1.6;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.rag-content:empty::before {
-    content: '暂无检索结果';
-    color: var(--text-muted);
-}
-
-.rag-item {
-    padding: 8px 0;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.rag-item:last-child {
-    border-bottom: none;
-}
-
-.rag-item-question {
-    font-weight: 500;
-    color: var(--primary-light);
-    margin-bottom: 4px;
-}
-
-.rag-item-answer {
-    color: var(--text-secondary);
-}
-
-.rag-item-score {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    margin-top: 4px;
-}
-
-/* 声纹注册 */
-.speaker-register-panel {
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    padding-top: 20px;
-}
-
-.register-form {
-    display: flex;
-    gap: 8px;
-}
-
-.register-form input {
-    flex: 1;
-    background: var(--bg-input);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: var(--border-radius-sm);
-    padding: 10px 14px;
-    color: var(--text-primary);
-    font-size: 0.9rem;
-    outline: none;
-    transition: all var(--transition-fast);
-}
-
-.register-form input:focus {
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(0, 180, 216, 0.2);
-}
-
-.register-form input::placeholder {
-    color: var(--text-muted);
-}
-
-.btn-secondary {
-    background: var(--bg-card);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: var(--border-radius-sm);
-    padding: 10px 16px;
-    color: var(--text-primary);
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    white-space: nowrap;
-}
-
-.btn-secondary:hover {
-    background: var(--bg-card-hover);
-    border-color: var(--primary-color);
-}
-
-/* ========================================
-   主聊天区域
-   ======================================== */
-.chat-main {
+/* 主内容区 */
+.main-content {
     flex: 1;
     display: flex;
     flex-direction: column;
-    background: transparent;
+    overflow: hidden;
+    margin: 1rem 0;
 }
 
-.chat-header {
-    height: var(--header-height);
+/* 对话面板 */
+.chat-panel {
+    flex: 1;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 24px;
-    background: rgba(10, 22, 40, 0.8);
-    backdrop-filter: blur(10px);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    flex-direction: column;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 16px;
+    overflow: hidden;
 }
 
-.chat-header h2 {
-    font-size: 1.2rem;
-    font-weight: 500;
-}
-
-.header-actions {
-    display: flex;
-    gap: 8px;
-}
-
-.btn-icon {
-    width: 40px;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--bg-card);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: var(--border-radius-sm);
-    cursor: pointer;
-    font-size: 1.2rem;
-    transition: all var(--transition-fast);
-}
-
-.btn-icon:hover {
-    background: var(--bg-card-hover);
-    border-color: var(--primary-color);
-}
-
-/* 聊天消息区域 */
 .chat-messages {
     flex: 1;
     overflow-y: auto;
-    padding: 24px;
+    padding: 1.5rem;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 1rem;
 }
 
+/* 欢迎消息 */
 .welcome-message {
     text-align: center;
-    padding: 60px 20px;
-    max-width: 500px;
-    margin: auto;
+    padding: 3rem 1rem;
+    color: #888;
 }
 
 .welcome-icon {
     font-size: 3rem;
-    margin-bottom: 20px;
-    animation: wave 2s infinite;
-}
-
-@keyframes wave {
-
-    0%,
-    100% {
-        transform: rotate(0deg);
-    }
-
-    25% {
-        transform: rotate(20deg);
-    }
-
-    75% {
-        transform: rotate(-10deg);
-    }
+    margin-bottom: 1rem;
 }
 
 .welcome-message h3 {
-    font-size: 1.5rem;
-    font-weight: 500;
-    margin-bottom: 12px;
-    background: linear-gradient(135deg, var(--primary-light), var(--primary-color));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    font-size: 1.3rem;
+    color: #fff;
+    margin-bottom: 0.5rem;
 }
 
 .welcome-message p {
-    color: var(--text-secondary);
-    line-height: 1.6;
-    margin-bottom: 20px;
-}
-
-.quick-tips {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.tip {
-    font-size: 0.9rem;
-    color: var(--text-muted);
+    font-size: 0.95rem;
+    max-width: 400px;
+    margin: 0 auto;
 }
 
 /* 消息气泡 */
 .message {
-    display: flex;
-    gap: 12px;
     max-width: 80%;
-    animation: messageIn 0.3s ease;
+    padding: 1rem 1.25rem;
+    border-radius: 16px;
+    animation: fadeIn 0.3s ease;
 }
 
-@keyframes messageIn {
+@keyframes fadeIn {
     from {
         opacity: 0;
         transform: translateY(10px);
@@ -500,165 +163,132 @@ body::before {
 }
 
 .message.user {
-    flex-direction: row-reverse;
     align-self: flex-end;
+    background: linear-gradient(135deg, #00d9ff, #0099cc);
+    color: #fff;
+    border-bottom-right-radius: 4px;
 }
 
-.message-avatar {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    background: var(--bg-card);
+.message.assistant {
+    align-self: flex-start;
+    background: rgba(255, 255, 255, 0.1);
+    color: #e8e8e8;
+    border-bottom-left-radius: 4px;
+}
+
+.message.error {
+    background: rgba(255, 100, 100, 0.2);
+    border: 1px solid rgba(255, 100, 100, 0.3);
+}
+
+.message-header {
     display: flex;
     align-items: center;
-    justify-content: center;
-    font-size: 1.2rem;
-    flex-shrink: 0;
-}
-
-.message.user .message-avatar {
-    background: var(--primary-color);
-}
-
-.message.assistant .message-avatar {
-    background: linear-gradient(135deg, #00b4d8, #0077b6);
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.6);
+    margin-bottom: 0.5rem;
 }
 
 .message-content {
-    background: var(--bg-card);
-    border-radius: var(--border-radius);
-    padding: 14px 18px;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.message.user .message-content {
-    background: linear-gradient(135deg, var(--primary-dark), var(--primary-color));
-    border-color: transparent;
-}
-
-.message-text {
-    font-size: 0.95rem;
     line-height: 1.6;
-}
-
-.message-meta {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 8px;
-    font-size: 0.75rem;
-    color: var(--text-muted);
-}
-
-.message.user .message-meta {
-    color: rgba(255, 255, 255, 0.6);
 }
 
 /* 输入区域 */
 .chat-input-area {
-    padding: 20px 24px;
-    background: rgba(10, 22, 40, 0.9);
-    backdrop-filter: blur(20px);
+    padding: 1rem;
+    background: rgba(0, 0, 0, 0.2);
     border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.input-container {
+.text-input-row {
     display: flex;
-    gap: 12px;
-    margin-bottom: 16px;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
 }
 
 #text-input {
     flex: 1;
-    background: var(--bg-input);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: var(--border-radius);
-    padding: 14px 18px;
-    color: var(--text-primary);
-    font-size: 0.95rem;
-    font-family: inherit;
+    padding: 0.875rem 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    color: #fff;
+    font-size: 1rem;
     resize: none;
     outline: none;
-    min-height: 50px;
-    max-height: 150px;
-    transition: all var(--transition-fast);
+    transition: border-color 0.3s;
 }
 
 #text-input:focus {
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(0, 180, 216, 0.15);
+    border-color: #00d9ff;
 }
 
 #text-input::placeholder {
-    color: var(--text-muted);
+    color: #666;
 }
 
-.btn-send {
-    width: 50px;
-    height: 50px;
-    background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+.send-btn {
+    padding: 0 1.25rem;
     border: none;
-    border-radius: var(--border-radius);
+    border-radius: 12px;
+    background: linear-gradient(135deg, #00d9ff, #00ff88);
+    color: #1a1a2e;
+    font-size: 1.25rem;
     cursor: pointer;
-    font-size: 1.3rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all var(--transition-fast);
-    box-shadow: 0 4px 15px rgba(0, 180, 216, 0.3);
+    transition: transform 0.2s, opacity 0.2s;
 }
 
-.btn-send:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(0, 180, 216, 0.4);
+.send-btn:hover {
+    transform: scale(1.05);
 }
 
-.btn-send:active {
-    transform: translateY(0);
+.send-btn:active {
+    transform: scale(0.95);
 }
 
-/* 语音控制区 */
-.voice-controls {
+/* 语音输入行 */
+.voice-input-row {
     display: flex;
     justify-content: center;
     align-items: center;
-    gap: 16px;
+    gap: 1rem;
 }
 
-.record-button {
+.record-btn {
     display: flex;
     align-items: center;
-    gap: 10px;
-    background: linear-gradient(135deg, #1a2a44, #0a1628);
-    border: 2px solid var(--primary-color);
-    border-radius: 30px;
-    padding: 14px 28px;
+    gap: 0.75rem;
+    padding: 1rem 2rem;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-radius: 50px;
+    background: rgba(255, 255, 255, 0.05);
+    color: #fff;
+    font-size: 1rem;
     cursor: pointer;
-    transition: all var(--transition-normal);
-    box-shadow: 0 4px 20px rgba(0, 180, 216, 0.2);
+    transition: all 0.3s ease;
 }
 
-.record-button:hover {
-    background: linear-gradient(135deg, #243654, #1a2a44);
-    box-shadow: 0 6px 25px rgba(0, 180, 216, 0.3);
-    transform: translateY(-2px);
+.record-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: #00d9ff;
 }
 
-.record-button.recording {
-    background: linear-gradient(135deg, #ff5252, #d32f2f);
-    border-color: #ff5252;
-    animation: recordPulse 1s infinite;
+.record-btn.recording {
+    background: rgba(255, 80, 80, 0.3);
+    border-color: #ff5050;
+    animation: pulse 1.5s infinite;
 }
 
-@keyframes recordPulse {
+@keyframes pulse {
 
     0%,
     100% {
-        box-shadow: 0 0 0 0 rgba(255, 82, 82, 0.4);
+        box-shadow: 0 0 0 0 rgba(255, 80, 80, 0.4);
     }
 
     50% {
-        box-shadow: 0 0 0 15px rgba(255, 82, 82, 0);
+        box-shadow: 0 0 0 15px rgba(255, 80, 80, 0);
     }
 }
 
@@ -666,30 +296,24 @@ body::before {
     font-size: 1.5rem;
 }
 
-.record-text {
-    font-size: 1rem;
-    font-weight: 500;
-    color: var(--text-primary);
-}
-
-.recording-indicator {
+.recording-status {
     display: none;
     align-items: center;
-    gap: 4px;
-    color: #ff5252;
+    gap: 0.5rem;
+    color: #ff5050;
     font-size: 0.9rem;
 }
 
-.recording-indicator.active {
+.recording-status.active {
     display: flex;
 }
 
 .wave {
     width: 4px;
     height: 20px;
-    background: #ff5252;
+    background: #ff5050;
     border-radius: 2px;
-    animation: waveAnim 0.5s ease-in-out infinite;
+    animation: wave 0.8s ease-in-out infinite;
 }
 
 .wave:nth-child(2) {
@@ -700,50 +324,153 @@ body::before {
     animation-delay: 0.2s;
 }
 
-@keyframes waveAnim {
+@keyframes wave {
 
     0%,
     100% {
-        height: 10px;
+        height: 8px;
     }
 
     50% {
-        height: 25px;
+        height: 24px;
     }
 }
 
-/* 加载动画 */
-.loading-dots {
-    display: inline-flex;
-    gap: 4px;
+/* 会诊面板 */
+.consultation-panel {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 16px;
+    padding: 1.5rem;
+    overflow: hidden;
 }
 
-.loading-dots span {
-    width: 8px;
-    height: 8px;
-    background: var(--primary-color);
-    border-radius: 50%;
-    animation: loadingBounce 0.6s infinite;
+.consultation-input,
+.consultation-output {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
 }
 
-.loading-dots span:nth-child(2) {
-    animation-delay: 0.1s;
+.consultation-input h3,
+.consultation-output h3 {
+    color: #00d9ff;
+    font-size: 1rem;
+    font-weight: 500;
 }
 
-.loading-dots span:nth-child(3) {
-    animation-delay: 0.2s;
+#dialogue-input {
+    flex: 1;
+    padding: 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    color: #fff;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    resize: none;
+    outline: none;
 }
 
-@keyframes loadingBounce {
+#dialogue-input:focus {
+    border-color: #00d9ff;
+}
 
-    0%,
-    100% {
-        transform: translateY(0);
-    }
+#dialogue-input::placeholder {
+    color: #666;
+}
 
-    50% {
-        transform: translateY(-8px);
-    }
+.generate-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 1rem;
+    border: none;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #00d9ff, #00ff88);
+    color: #1a1a2e;
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: transform 0.2s, opacity 0.2s;
+}
+
+.generate-btn:hover {
+    transform: scale(1.02);
+}
+
+.generate-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.soap-result {
+    flex: 1;
+    padding: 1rem;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    overflow-y: auto;
+    line-height: 1.6;
+}
+
+.soap-result .placeholder-text {
+    color: #666;
+    font-style: italic;
+}
+
+.soap-section {
+    margin-bottom: 1rem;
+}
+
+.soap-section h4 {
+    color: #00d9ff;
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+}
+
+.soap-section p {
+    color: #e8e8e8;
+    font-size: 0.95rem;
+}
+
+.copy-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    background: transparent;
+    color: #fff;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.copy-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* 状态栏 */
+.status-bar {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    padding: 0.75rem;
+    font-size: 0.85rem;
+    color: #888;
+}
+
+.status-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
 }
 
 /* 滚动条样式 */
@@ -764,23 +491,29 @@ body::before {
     background: rgba(255, 255, 255, 0.3);
 }
 
-/* 响应式设计 */
-@media screen and (max-width: 1024px) {
-    .sidebar {
-        width: 280px;
-    }
-}
-
-@media screen and (max-width: 768px) {
-    .app-container {
-        flex-direction: column;
+/* 响应式 */
+@media (max-width: 768px) {
+    .app-header {
+        padding: 0.75rem 0;
     }
 
-    .sidebar {
-        width: 100%;
-        max-height: 40vh;
-        border-right: none;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    .logo h1 {
+        font-size: 1.2rem;
+    }
+
+    .mode-switcher {
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    .mode-btn {
+        padding: 0.5rem 1rem;
+        font-size: 0.85rem;
+    }
+
+    .consultation-panel {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr 1fr;
     }
 
     .message {
@@ -788,927 +521,43 @@ body::before {
     }
 }
 
-/* 通知提示 */
-.toast {
-    position: fixed;
-    bottom: 100px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: rgba(0, 0, 0, 0.8);
-    color: white;
-    padding: 12px 24px;
-    border-radius: var(--border-radius);
-    font-size: 0.9rem;
-    z-index: 1000;
-    animation: toastIn 0.3s ease, toastOut 0.3s ease 2.7s forwards;
-}
-
-@keyframes toastIn {
-    from {
-        opacity: 0;
-        transform: translate(-50%, 20px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translate(-50%, 0);
-    }
-}
-
-@keyframes toastOut {
-    to {
-        opacity: 0;
-        transform: translate(-50%, 20px);
-    }
-}
-
-/* ========================================
-   医生模式样式
-   ======================================== */
-
-/* 模式切换按钮 */
-.btn-mode-toggle {
-    background: var(--bg-card);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: var(--border-radius-sm);
-    padding: 8px 16px;
-    color: var(--text-primary);
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    margin-right: 8px;
-}
-
-.btn-mode-toggle:hover {
-    background: var(--bg-card-hover);
-    border-color: var(--primary-color);
-}
-
-.btn-mode-toggle.active {
-    background: linear-gradient(135deg, #00b4d8, #0077b6);
-    border-color: transparent;
-}
-
-/* 三模式选择器 */
-.mode-selector {
-    display: flex;
+/* 加载动画 */
+.loading {
+    display: inline-flex;
     gap: 4px;
-    margin-right: 12px;
-    background: var(--bg-card);
-    padding: 4px;
-    border-radius: var(--border-radius-sm);
-    border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.mode-selector .mode-btn {
-    padding: 6px 12px;
-    background: transparent;
-    border: none;
-    border-radius: 6px;
-    color: var(--text-secondary);
-    font-size: 0.8rem;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-}
-
-.mode-selector .mode-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--text-primary);
-}
-
-.mode-selector .mode-btn.active {
-    background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
-    color: white;
-}
-
-/* 模式特定样式 */
-body.mode-patient::before {
-    background:
-        radial-gradient(circle at 20% 80%, rgba(0, 180, 216, 0.15) 0%, transparent 50%),
-        radial-gradient(circle at 80% 20%, rgba(0, 119, 182, 0.15) 0%, transparent 50%);
-}
-
-body.mode-doctor::before {
-    background:
-        radial-gradient(circle at 20% 80%, rgba(76, 175, 80, 0.15) 0%, transparent 50%),
-        radial-gradient(circle at 80% 20%, rgba(56, 142, 60, 0.15) 0%, transparent 50%);
-}
-
-body.mode-consultation::before {
-    background:
-        radial-gradient(circle at 20% 80%, rgba(255, 152, 0, 0.15) 0%, transparent 50%),
-        radial-gradient(circle at 80% 20%, rgba(245, 124, 0, 0.15) 0%, transparent 50%);
-}
-
-/* 医生模式整体样式 */
-body.doctor-mode::before {
-    background:
-        radial-gradient(circle at 20% 80%, rgba(0, 200, 83, 0.1) 0%, transparent 50%),
-        radial-gradient(circle at 80% 20%, rgba(0, 119, 182, 0.15) 0%, transparent 50%);
-}
-
-/* SOAP 面板 */
-.soap-panel {
-    width: 360px;
-    background: rgba(10, 22, 40, 0.95);
-    backdrop-filter: blur(20px);
-    border-left: 1px solid rgba(255, 255, 255, 0.1);
-    display: none;
-    flex-direction: column;
-    overflow-y: auto;
-    padding: 20px;
-}
-
-.soap-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 20px;
-    padding-bottom: 15px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.soap-header h3 {
-    font-size: 1.1rem;
-    font-weight: 500;
-    color: var(--text-primary);
-}
-
-.soap-actions {
-    display: flex;
-    gap: 8px;
-}
-
-.soap-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-}
-
-.soap-section {
-    background: var(--bg-card);
-    border-radius: var(--border-radius-sm);
-    padding: 14px;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    transition: all var(--transition-normal);
-}
-
-.soap-section:hover {
-    border-color: rgba(0, 180, 216, 0.3);
-}
-
-.soap-section h4 {
-    font-size: 0.85rem;
-    font-weight: 500;
-    color: var(--primary-light);
-    margin-bottom: 10px;
-}
-
-.soap-section-content {
-    font-size: 0.9rem;
-    color: var(--text-secondary);
-    line-height: 1.6;
-}
-
-.soap-section-content .muted {
-    color: var(--text-muted);
-    font-style: italic;
-}
-
-.soap-footer {
-    padding-top: 15px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    margin-top: auto;
-}
-
-.soap-stats {
-    display: flex;
-    gap: 16px;
-    font-size: 0.8rem;
-    color: var(--text-muted);
-}
-
-.soap-verification {
-    margin-top: 8px;
-    font-size: 0.8rem;
-}
-
-/* 实体标签 */
-.entity-tag {
-    display: inline-block;
-    padding: 3px 10px;
-    border-radius: 12px;
-    font-size: 0.8rem;
-    margin: 2px 4px 2px 0;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.entity-tag.symptom {
-    background: rgba(255, 152, 0, 0.2);
-    border-color: rgba(255, 152, 0, 0.4);
-    color: #ffb74d;
-}
-
-.entity-tag.disease {
-    background: rgba(244, 67, 54, 0.2);
-    border-color: rgba(244, 67, 54, 0.4);
-    color: #ef9a9a;
-}
-
-.entity-tag.medication {
-    background: rgba(76, 175, 80, 0.2);
-    border-color: rgba(76, 175, 80, 0.4);
-    color: #a5d6a7;
-}
-
-.entity-tag.procedure {
-    background: rgba(33, 150, 243, 0.2);
-    border-color: rgba(33, 150, 243, 0.4);
-    color: #90caf9;
-}
-
-.entity-tag small {
-    opacity: 0.6;
-    margin-left: 4px;
-    font-size: 0.7rem;
-}
-
-/* 实体面板 */
-.entities-panel {
-    margin-bottom: 20px;
-    padding-bottom: 15px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.entities-panel h3 {
-    font-size: 0.95rem;
-    font-weight: 500;
-    color: var(--text-secondary);
-    margin-bottom: 12px;
-}
-
-.entities-content {
-    max-height: 150px;
-    overflow-y: auto;
-}
-
-/* SOAP 模态框 */
-.soap-modal {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.8);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    animation: fadeIn 0.3s ease;
-}
-
-.soap-modal-content {
-    background: var(--bg-dark);
-    border-radius: var(--border-radius);
-    width: 90%;
-    max-width: 700px;
-    max-height: 85vh;
-    overflow-y: auto;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: var(--shadow-lg);
-}
-
-.soap-modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px 24px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.soap-modal-header h2 {
-    font-size: 1.3rem;
-}
-
-.btn-close {
-    width: 36px;
-    height: 36px;
-    background: var(--bg-card);
-    border: none;
+.loading span {
+    width: 8px;
+    height: 8px;
+    background: #00d9ff;
     border-radius: 50%;
-    color: var(--text-secondary);
-    cursor: pointer;
-    font-size: 1.2rem;
-    transition: all var(--transition-fast);
+    animation: bounce 1.4s ease-in-out infinite;
 }
 
-.btn-close:hover {
-    background: var(--error);
-    color: white;
+.loading span:nth-child(1) {
+    animation-delay: 0s;
 }
 
-.soap-modal-body {
-    padding: 24px;
+.loading span:nth-child(2) {
+    animation-delay: 0.2s;
 }
 
-.soap-modal-body section {
-    margin-bottom: 24px;
+.loading span:nth-child(3) {
+    animation-delay: 0.4s;
 }
 
-.soap-modal-body h3 {
-    font-size: 1.1rem;
-    color: var(--primary-light);
-    margin-bottom: 12px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.soap-modal-body p {
-    margin-bottom: 8px;
-    line-height: 1.7;
-    color: var(--text-secondary);
-}
-
-.soap-modal-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 16px 24px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    background: var(--bg-card);
-}
-
-.confidence {
-    font-size: 0.85rem;
-    color: var(--text-muted);
-}
-
-.btn-primary {
-    background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
-    border: none;
-    border-radius: var(--border-radius-sm);
-    padding: 10px 20px;
-    color: white;
-    font-size: 0.9rem;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-}
-
-.btn-primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 15px rgba(0, 180, 216, 0.3);
-}
-
-/* 急救模态框 */
-.emergency-modal {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(139, 0, 0, 0.9);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2000;
-    animation: emergencyFlash 0.5s ease;
-}
-
-@keyframes emergencyFlash {
+@keyframes bounce {
 
     0%,
-    50% {
-        background: rgba(200, 0, 0, 0.95);
-    }
-
-    25%,
-    75% {
-        background: rgba(139, 0, 0, 0.9);
-    }
-}
-
-.emergency-modal-content {
-    background: linear-gradient(145deg, #1a0000, #2d0000);
-    border: 3px solid #ff5252;
-    border-radius: var(--border-radius);
-    padding: 30px;
-    max-width: 500px;
-    text-align: center;
-    box-shadow: 0 0 50px rgba(255, 82, 82, 0.5);
-    animation: emergencyPulse 1s infinite;
-}
-
-@keyframes emergencyPulse {
-
-    0%,
+    80%,
     100% {
-        box-shadow: 0 0 50px rgba(255, 82, 82, 0.5);
+        transform: scale(0.8);
+        opacity: 0.5;
     }
 
-    50% {
-        box-shadow: 0 0 80px rgba(255, 82, 82, 0.8);
-    }
-}
-
-.emergency-header {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    margin-bottom: 20px;
-}
-
-.emergency-icon {
-    font-size: 4rem;
-    animation: shake 0.5s infinite;
-}
-
-@keyframes shake {
-
-    0%,
-    100% {
-        transform: translateX(0);
-    }
-
-    25% {
-        transform: translateX(-5px);
-    }
-
-    75% {
-        transform: translateX(5px);
-    }
-}
-
-.emergency-header h2 {
-    font-size: 1.5rem;
-    color: #ff5252;
-    margin-top: 10px;
-}
-
-.emergency-body {
-    margin-bottom: 24px;
-}
-
-.emergency-message {
-    font-size: 1.1rem;
-    color: white;
-    margin-bottom: 16px;
-    line-height: 1.6;
-}
-
-.emergency-triggers {
-    background: rgba(255, 82, 82, 0.2);
-    padding: 12px;
-    border-radius: var(--border-radius-sm);
-    color: #ffcdd2;
-}
-
-.emergency-actions {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.emergency-action-btn {
-    background: #ff5252;
-    border: none;
-    border-radius: var(--border-radius-sm);
-    padding: 14px 24px;
-    color: white;
-    font-size: 1rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-}
-
-.emergency-action-btn:hover {
-    background: #ff1744;
-    transform: scale(1.02);
-}
-
-.emergency-dismiss-btn {
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    border-radius: var(--border-radius-sm);
-    padding: 10px 20px;
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 0.9rem;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-}
-
-.emergency-dismiss-btn:hover {
-    border-color: rgba(255, 255, 255, 0.5);
-    color: white;
-}
-
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-    }
-
-    to {
+    40% {
+        transform: scale(1);
         opacity: 1;
     }
-}
-
-/* ========================================
-   抄写员模式样式
-   ======================================== */
-
-/* 角色选择器 */
-.role-selector {
-    display: none;
-    align-items: center;
-    gap: 10px;
-    padding: 12px 0;
-    margin-bottom: 10px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.role-label {
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-}
-
-.role-btn {
-    padding: 8px 16px;
-    background: var(--bg-card);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 20px;
-    color: var(--text-secondary);
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-}
-
-.role-btn:hover {
-    background: var(--bg-card-hover);
-    border-color: var(--primary-color);
-}
-
-.role-btn.active {
-    background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
-    border-color: transparent;
-    color: white;
-}
-
-/* 抄写员欢迎界面 */
-.scribe-welcome {
-    text-align: center;
-    padding: 60px 20px;
-    max-width: 500px;
-    margin: auto;
-}
-
-.scribe-icon {
-    font-size: 3rem;
-    margin-bottom: 20px;
-}
-
-.scribe-welcome h3 {
-    font-size: 1.5rem;
-    font-weight: 500;
-    margin-bottom: 12px;
-    color: var(--primary-light);
-}
-
-.scribe-welcome p {
-    color: var(--text-secondary);
-    line-height: 1.6;
-    margin-bottom: 20px;
-}
-
-.scribe-tips {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.scribe-tips span {
-    font-size: 0.9rem;
-    color: var(--text-muted);
-}
-
-/* 抄写员消息样式 */
-.scribe-message {
-    max-width: 85%;
-}
-
-.scribe-message .message-role {
-    font-size: 0.75rem;
-    font-weight: 500;
-    color: var(--text-muted);
-    margin-bottom: 4px;
-}
-
-.scribe-message.patient .message-avatar {
-    background: linear-gradient(135deg, #4fc3f7, #0288d1);
-}
-
-.scribe-message.doctor .message-avatar {
-    background: linear-gradient(135deg, #81c784, #388e3c);
-}
-
-.scribe-message.family .message-avatar {
-    background: linear-gradient(135deg, #ffb74d, #f57c00);
-}
-
-.scribe-message.patient {
-    align-self: flex-end;
-}
-
-.scribe-message.doctor {
-    align-self: flex-start;
-}
-
-.scribe-message.family {
-    align-self: flex-end;
-}
-
-/* 提取的实体列表 */
-.extracted-entities {
-    margin-top: 16px;
-    padding-top: 12px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.extracted-entities h4 {
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-    margin-bottom: 8px;
-}
-
-.entities-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    max-height: 100px;
-    overflow-y: auto;
-}
-
-/* 危险按钮 */
-.btn-danger {
-    background: rgba(255, 82, 82, 0.2) !important;
-    border-color: rgba(255, 82, 82, 0.4) !important;
-}
-
-.btn-danger:hover {
-    background: rgba(255, 82, 82, 0.4) !important;
-}
-
-/* ========================================
-   粘贴对话生成病历模态框
-   ======================================== */
-.paste-dialogue-modal {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.8);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    animation: fadeIn 0.2s ease;
-}
-
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-    }
-
-    to {
-        opacity: 1;
-    }
-}
-
-.paste-modal-content {
-    background: var(--bg-dark);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: var(--border-radius);
-    width: 90%;
-    max-width: 700px;
-    max-height: 85vh;
-    display: flex;
-    flex-direction: column;
-    box-shadow: var(--shadow-lg);
-    animation: slideUp 0.3s ease;
-}
-
-@keyframes slideUp {
-    from {
-        transform: translateY(20px);
-        opacity: 0;
-    }
-
-    to {
-        transform: translateY(0);
-        opacity: 1;
-    }
-}
-
-.paste-modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 18px 24px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.paste-modal-header h2 {
-    font-size: 1.2rem;
-    font-weight: 500;
-    color: var(--text-primary);
-}
-
-.paste-modal-body {
-    padding: 20px 24px;
-    flex: 1;
-    overflow-y: auto;
-}
-
-.paste-hint {
-    color: var(--text-secondary);
-    font-size: 0.9rem;
-    margin-bottom: 12px;
-}
-
-.paste-example {
-    background: var(--bg-card);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: var(--border-radius-sm);
-    padding: 14px 18px;
-    margin-bottom: 16px;
-    font-size: 0.85rem;
-    line-height: 1.8;
-}
-
-.paste-example code {
-    color: var(--primary-light);
-    font-family: 'Monaco', 'Consolas', monospace;
-}
-
-.dialogue-textarea {
-    width: 100%;
-    background: var(--bg-input);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    border-radius: var(--border-radius-sm);
-    padding: 14px 18px;
-    color: var(--text-primary);
-    font-size: 0.95rem;
-    font-family: inherit;
-    line-height: 1.6;
-    resize: vertical;
-    min-height: 200px;
-    outline: none;
-    transition: all var(--transition-fast);
-}
-
-.dialogue-textarea:focus {
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(0, 180, 216, 0.15);
-}
-
-.dialogue-textarea::placeholder {
-    color: var(--text-muted);
-}
-
-.paste-modal-footer {
-    display: flex;
-    gap: 12px;
-    justify-content: flex-end;
-    padding: 16px 24px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.btn-primary {
-    background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
-    border: none;
-    border-radius: var(--border-radius-sm);
-    padding: 12px 24px;
-    color: white;
-    font-size: 0.95rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    box-shadow: 0 4px 12px rgba(0, 180, 216, 0.3);
-}
-
-.btn-primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 16px rgba(0, 180, 216, 0.4);
-}
-
-.btn-primary:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-    transform: none;
-}
-
-.btn-close {
-    background: transparent;
-    border: none;
-    color: var(--text-muted);
-    font-size: 1.5rem;
-    cursor: pointer;
-    transition: color var(--transition-fast);
-    line-height: 1;
-}
-
-.btn-close:hover {
-    color: var(--text-primary);
-}
-
-/* 生成的SOAP结果模态框 */
-.generated-soap-modal .soap-modal-content {
-    max-width: 800px;
-}
-
-.soap-result-section {
-    margin-bottom: 20px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.soap-result-section:last-child {
-    border-bottom: none;
-    margin-bottom: 0;
-}
-
-.soap-result-section h3 {
-    font-size: 1rem;
-    font-weight: 500;
-    color: var(--primary-light);
-    margin-bottom: 10px;
-}
-
-.soap-result-section p {
-    color: var(--text-secondary);
-    line-height: 1.6;
-    font-size: 0.9rem;
-    margin-bottom: 6px;
-}
-
-.soap-result-section p strong {
-    color: var(--text-primary);
-}
-
-.entities-section {
-    background: var(--bg-card);
-    border-radius: var(--border-radius-sm);
-    padding: 16px;
-}
-
-.entity-tags {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-
-.entity-group {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-}
-
-.entity-label {
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    min-width: 50px;
-}
-
-.entity-tag {
-    display: inline-block;
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 0.8rem;
-    font-weight: 500;
-}
-
-.entity-tag.symptom {
-    background: rgba(255, 193, 7, 0.2);
-    color: #ffc107;
-    border: 1px solid rgba(255, 193, 7, 0.4);
-}
-
-.entity-tag.disease {
-    background: rgba(244, 67, 54, 0.2);
-    color: #f44336;
-    border: 1px solid rgba(244, 67, 54, 0.4);
-}
-
-.entity-tag.medication {
-    background: rgba(76, 175, 80, 0.2);
-    color: #4caf50;
-    border: 1px solid rgba(76, 175, 80, 0.4);
-}
-
-.entity-tag.procedure {
-    background: rgba(33, 150, 243, 0.2);
-    color: #2196f3;
-    border: 1px solid rgba(33, 150, 243, 0.4);
 }
