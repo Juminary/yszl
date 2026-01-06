@@ -331,19 +331,62 @@ class FullDuplexController:
         elif self._state == InteractionState.SPEAKING:
             self._check_barge_in(is_speech, energy, vad_confidence)
     
-    def _check_barge_in(self, is_speech: bool, energy: float, vad_confidence: float):
+    def _check_barge_in(
+        self, 
+        is_speech: bool, 
+        energy: float, 
+        vad_confidence: float,
+        doa_angle: float = None
+    ):
         """
-        检测用户打断
+        DOA辅助打断检测
         
-        在TTS播放期间，如果检测到用户语音超过阈值，触发打断
+        增强版打断检测:
+        1. VAD检测到语音活动
+        2. DOA方向与扬声器方向不同 (区分用户vs回声)
+        3. 持续时间超过阈值
+        
+        Args:
+            is_speech: VAD语音活动
+            energy: 音频能量
+            vad_confidence: VAD置信度
+            doa_angle: 声源方向 (度)
         """
+        # 扬声器方向 (可配置，假设扬声器在设备前方)
+        speaker_direction = getattr(self, '_speaker_direction', 0.0)
+        doa_threshold = getattr(self, '_doa_threshold', 30.0)
+        
+        # 基础VAD检查
         if not is_speech or vad_confidence < self.interrupt_threshold:
             self._interrupt_speech_start = None
+            self._interrupt_doa_valid = False
+            return
+        
+        # DOA辅助判断：检查声源是否来自用户方向（非扬声器方向）
+        doa_is_user = True  # 默认认为是用户
+        
+        if doa_angle is not None and speaker_direction is not None:
+            # 计算与扬声器方向的角度差
+            angle_diff = abs(doa_angle - speaker_direction)
+            if angle_diff > 180:
+                angle_diff = 360 - angle_diff
+            
+            # 如果声源接近扬声器方向，可能是回声而非用户
+            if angle_diff < doa_threshold:
+                doa_is_user = False
+                logger.debug(f"DOA {doa_angle:.1f}° close to speaker {speaker_direction:.1f}°, likely echo")
+        
+        # 如果DOA判断不是用户，重置打断计时
+        if not doa_is_user:
+            self._interrupt_speech_start = None
+            self._interrupt_doa_valid = False
             return
         
         # 记录语音开始时间
         if self._interrupt_speech_start is None:
             self._interrupt_speech_start = time.time()
+            self._interrupt_doa_valid = True
+            logger.debug(f"Potential barge-in started: DOA={doa_angle}°")
             return
         
         # 检查持续时间
@@ -356,12 +399,35 @@ class FullDuplexController:
                 data={
                     "confidence": vad_confidence,
                     "duration": speech_duration,
-                    "energy": energy
+                    "energy": energy,
+                    "doa_angle": doa_angle,
+                    "doa_assisted": True,
                 },
                 source="fullduplex_controller",
                 priority=2  # 高优先级
             )
+            logger.info(f"DOA-assisted barge-in triggered: DOA={doa_angle}°, duration={speech_duration:.2f}s")
             self._interrupt_speech_start = None
+            self._interrupt_doa_valid = False
+    
+    def set_speaker_direction(self, direction: float):
+        """
+        设置扬声器方向
+        
+        Args:
+            direction: 扬声器方向角度 (0-360)
+        """
+        self._speaker_direction = direction
+        logger.info(f"Speaker direction set to {direction}°")
+    
+    def set_doa_threshold(self, threshold: float):
+        """
+        设置DOA区分阈值
+        
+        Args:
+            threshold: 角度阈值 (度), 默认30度
+        """
+        self._doa_threshold = threshold
     
     def set_reference_audio(self, audio_chunk: np.ndarray):
         """

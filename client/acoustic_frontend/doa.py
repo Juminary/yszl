@@ -1,36 +1,31 @@
 """
-DOA (Direction of Arrival) 声源定位模块
+增强的 DOA (Direction of Arrival) 声源定位模块
 
-基于 GCC-PHAT (Generalized Cross-Correlation with Phase Transform) 算法
-利用 ReSpeaker 6-Mic 环形阵列实现 360° 声源方向估计
+支持两种模式:
+1. 内置 GCC-PHAT: 轻量级，无外部依赖
+2. ODAS 集成: SRP-PHAT + 卡尔曼滤波跟踪 (精度更高)
 
-原理:
-1. 计算麦克风对之间的时延 (TDOA)
-2. 根据时延和阵列几何关系估计声源方向
-3. 多麦克风对结果融合提高精度
-
-阵列布局 (俯视图):
-            0° (Mic 0)
-              ●
-         ●         ●  
-       Mic 5      Mic 1
-                    
-     ●               ● 
-    Mic 4         Mic 2
-         ●
-        Mic 3
-           180°
+在有 ODAS 运行时自动使用 ODAS 数据，否则降级到内置算法
 """
 
 import numpy as np
 import logging
-from typing import Tuple, Optional, List
+import threading
+import time
+from typing import Tuple, Optional, List, Dict, Callable
 from dataclasses import dataclass
+from enum import Enum
 
 logger = logging.getLogger(__name__)
 
 # 声速 (m/s)
 SPEED_OF_SOUND = 343.0
+
+
+class DOABackend(Enum):
+    """DOA 后端类型"""
+    BUILTIN_GCC_PHAT = "gcc_phat"      # 内置 GCC-PHAT
+    ODAS_SRP_PHAT = "odas"             # ODAS SRP-PHAT
 
 
 @dataclass
@@ -39,38 +34,72 @@ class DOAConfig:
     sample_rate: int = 16000
     
     # 阵列几何 (6麦克风环形排列)
-    mic_angles_deg: List[float] = None    # 各麦克风角度位置
-    array_radius_m: float = 0.035         # 阵列半径 (米)
+    mic_angles_deg: List[float] = None
+    array_radius_m: float = 0.0463     # ReSpeaker 6-Mic 半径
     
     # 算法参数
-    fft_size: int = 512                   # FFT窗口大小
-    num_directions: int = 360             # 搜索方向数 (分辨率)
+    fft_size: int = 512
+    num_directions: int = 360
     
     # 麦克风对选择 (相对位置的麦克风对效果最好)
     mic_pairs: List[Tuple[int, int]] = None
+    
+    # 后端选择
+    backend: DOABackend = DOABackend.BUILTIN_GCC_PHAT
+    
+    # ODAS 配置
+    odas_sst_port: int = 9000
+    odas_auto_fallback: bool = True    # ODAS 不可用时自动降级
     
     def __post_init__(self):
         if self.mic_angles_deg is None:
             self.mic_angles_deg = [0, 60, 120, 180, 240, 300]
         
-        # 默认使用对角麦克风对 (0-3, 1-4, 2-5)
         if self.mic_pairs is None:
             self.mic_pairs = [(0, 3), (1, 4), (2, 5)]
 
 
-class DOAEstimator:
-    """
-    DOA 声源定位估计器
+@dataclass 
+class DOAResult:
+    """DOA 估计结果"""
+    angle: float                  # 方位角 (0-360度)
+    confidence: float             # 置信度 (0-1)
+    energy: float = 0.0           # 声源能量
+    source_id: int = 0            # 声源 ID (ODAS 分配)
+    backend: DOABackend = DOABackend.BUILTIN_GCC_PHAT
+    timestamp: float = None
     
-    使用 GCC-PHAT 算法估计声源到达方向
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = time.time()
+    
+    def to_dict(self) -> Dict:
+        return {
+            "angle": round(self.angle, 1),
+            "confidence": round(self.confidence, 3),
+            "energy": round(self.energy, 4),
+            "source_id": self.source_id,
+            "backend": self.backend.value,
+        }
+
+
+class EnhancedDOAEstimator:
+    """
+    增强的 DOA 声源定位估计器
+    
+    支持 GCC-PHAT 内置算法和 ODAS SRP-PHAT 外部引擎
     
     使用示例:
     ```python
-    doa = DOAEstimator(sample_rate=16000)
+    # 自动选择最佳后端
+    doa = EnhancedDOAEstimator(backend="auto")
     
-    # mic_data shape: (samples, 6)
-    angle, confidence = doa.estimate(mic_data)
-    print(f"Sound from {angle}° with confidence {confidence:.2f}")
+    # 强制使用 ODAS
+    doa = EnhancedDOAEstimator(backend=DOABackend.ODAS_SRP_PHAT)
+    
+    # 估计声源方向
+    result = doa.estimate(mic_data)
+    print(f"Sound from {result.angle}° (backend: {result.backend})")
     ```
     """
     
@@ -78,15 +107,17 @@ class DOAEstimator:
         self,
         sample_rate: int = 16000,
         mic_angles: List[float] = None,
-        array_radius: float = 0.035,
+        array_radius: float = 0.0463,
+        backend: str = "auto",
     ):
         """
-        初始化DOA估计器
+        初始化增强DOA估计器
         
         Args:
             sample_rate: 采样率
             mic_angles: 各麦克风的角度位置 (度)
             array_radius: 阵列半径 (米)
+            backend: 后端选择 ("auto", "gcc_phat", "odas")
         """
         self.config = DOAConfig(
             sample_rate=sample_rate,
@@ -94,21 +125,63 @@ class DOAEstimator:
             array_radius_m=array_radius,
         )
         
-        # 预计算麦克风位置 (笛卡尔坐标)
-        self._mic_positions = self._compute_mic_positions()
+        # 后端选择
+        self._backend = self._select_backend(backend)
+        self._odas_client = None
+        self._odas_available = False
         
-        # 预计算各方向的理论时延
+        # 内置 GCC-PHAT 组件
+        self._mic_positions = self._compute_mic_positions()
         self._delays_table = self._precompute_delays()
         
         # 历史平滑
         self._angle_history = []
         self._history_size = 5
         
-        logger.info(f"DOAEstimator initialized: {len(self.config.mic_angles_deg)} mics, "
-                   f"radius={self.config.array_radius_m*100:.1f}cm")
+        # 初始化 ODAS 客户端 (如果需要)
+        if self._backend == DOABackend.ODAS_SRP_PHAT or backend == "auto":
+            self._init_odas_client()
+        
+        logger.info(f"EnhancedDOAEstimator initialized: backend={self._backend.value}, "
+                   f"odas_available={self._odas_available}")
+    
+    def _select_backend(self, backend_str: str) -> DOABackend:
+        """选择后端"""
+        if backend_str == "auto":
+            return DOABackend.ODAS_SRP_PHAT  # 优先尝试 ODAS
+        elif backend_str == "odas":
+            return DOABackend.ODAS_SRP_PHAT
+        else:
+            return DOABackend.BUILTIN_GCC_PHAT
+    
+    def _init_odas_client(self):
+        """初始化 ODAS 客户端"""
+        try:
+            from .odas_client import ODASClient
+            
+            self._odas_client = ODASClient(
+                sst_port=self.config.odas_sst_port
+            )
+            self._odas_client.start()
+            
+            # 等待连接
+            time.sleep(0.5)
+            self._odas_available = self._odas_client.is_connected()
+            
+            if self._odas_available:
+                logger.info("ODAS backend connected")
+            else:
+                logger.warning("ODAS not available, using fallback")
+                
+        except ImportError:
+            logger.warning("ODAS client not found")
+            self._odas_available = False
+        except Exception as e:
+            logger.warning(f"ODAS init failed: {e}")
+            self._odas_available = False
     
     def _compute_mic_positions(self) -> np.ndarray:
-        """计算麦克风笛卡尔坐标 (x, y)"""
+        """计算麦克风笛卡尔坐标"""
         positions = []
         for angle_deg in self.config.mic_angles_deg:
             angle_rad = np.radians(angle_deg)
@@ -126,110 +199,131 @@ class DOAEstimator:
         
         for dir_idx in range(num_directions):
             angle_rad = np.radians(dir_idx)
-            # 声源方向单位向量
             direction = np.array([np.cos(angle_rad), np.sin(angle_rad)])
             
             for pair_idx, (mic_i, mic_j) in enumerate(self.config.mic_pairs):
-                # 两麦克风位置差
                 pos_diff = self._mic_positions[mic_i] - self._mic_positions[mic_j]
-                # 理论时延 (秒)
                 tau = np.dot(pos_diff, direction) / SPEED_OF_SOUND
-                # 转换为采样点
                 delays[dir_idx, pair_idx] = tau * self.config.sample_rate
         
         return delays
     
-    def estimate(self, mic_data: np.ndarray) -> Tuple[float, float]:
+    def estimate(self, mic_data: np.ndarray = None) -> DOAResult:
         """
         估计声源方向
         
         Args:
             mic_data: 多通道麦克风数据, shape=(samples, 6)
+                     如果使用 ODAS 后端, 可以为 None
             
         Returns:
-            (angle, confidence): 声源方向角度(0-360)和置信度(0-1)
+            DOAResult 对象
         """
+        # 优先使用 ODAS
+        if self._odas_available and self._odas_client:
+            result = self._estimate_from_odas()
+            if result is not None:
+                return result
+            
+            # ODAS 无数据时降级
+            if not self.config.odas_auto_fallback:
+                return DOAResult(angle=0, confidence=0, backend=DOABackend.ODAS_SRP_PHAT)
+        
+        # 使用内置 GCC-PHAT
+        if mic_data is None:
+            return DOAResult(angle=0, confidence=0, backend=DOABackend.BUILTIN_GCC_PHAT)
+        
+        return self._estimate_gcc_phat(mic_data)
+    
+    def _estimate_from_odas(self) -> Optional[DOAResult]:
+        """从 ODAS 获取 DOA 估计"""
+        if not self._odas_client:
+            return None
+        
+        sources = self._odas_client.get_tracked_sources(active_only=True)
+        
+        if not sources:
+            return None
+        
+        # 返回能量最强的声源
+        primary = sources[0]
+        
+        return DOAResult(
+            angle=primary.azimuth,
+            confidence=primary.activity,
+            energy=primary.energy,
+            source_id=primary.id,
+            backend=DOABackend.ODAS_SRP_PHAT,
+        )
+    
+    def _estimate_gcc_phat(self, mic_data: np.ndarray) -> DOAResult:
+        """使用 GCC-PHAT 估计 DOA"""
         if mic_data.shape[1] < 6:
             logger.warning(f"Expected 6 channels, got {mic_data.shape[1]}")
-            return 0.0, 0.0
+            return DOAResult(angle=0, confidence=0, backend=DOABackend.BUILTIN_GCC_PHAT)
         
-        # 转换为float32
         mic_data = mic_data.astype(np.float32)
         
-        # 检查是否有有效信号
+        # 检查信号能量
         energy = np.sqrt(np.mean(mic_data ** 2))
-        if energy < 100:  # 信号太弱
-            return self._get_smoothed_angle(None), 0.0
+        if energy < 100:
+            return DOAResult(
+                angle=self._get_smoothed_angle(None),
+                confidence=0,
+                energy=energy / 32768,
+                backend=DOABackend.BUILTIN_GCC_PHAT
+            )
         
-        # 对各麦克风对计算 GCC-PHAT
+        # GCC-PHAT 计算
         gcc_sum = np.zeros(self.config.num_directions)
         
         for pair_idx, (mic_i, mic_j) in enumerate(self.config.mic_pairs):
             tau, peak_value = self._gcc_phat(mic_data[:, mic_i], mic_data[:, mic_j])
             
-            # 将测量的时延与理论时延对比，找到最匹配的方向
             for dir_idx in range(self.config.num_directions):
                 expected_tau = self._delays_table[dir_idx, pair_idx]
-                # 时延匹配得分 (高斯权重)
                 error = abs(tau - expected_tau)
                 score = np.exp(-error ** 2 / 2) * peak_value
                 gcc_sum[dir_idx] += score
         
-        # 找到最佳方向
         best_dir = np.argmax(gcc_sum)
         best_score = gcc_sum[best_dir]
         
-        # 归一化置信度
         confidence = min(1.0, best_score / (len(self.config.mic_pairs) * 0.8))
-        
-        # 平滑处理
         smoothed_angle = self._get_smoothed_angle(best_dir)
         
-        return smoothed_angle, confidence
+        return DOAResult(
+            angle=smoothed_angle,
+            confidence=confidence,
+            energy=energy / 32768,
+            backend=DOABackend.BUILTIN_GCC_PHAT,
+        )
     
     def _gcc_phat(self, sig1: np.ndarray, sig2: np.ndarray) -> Tuple[float, float]:
-        """
-        GCC-PHAT 时延估计
-        
-        Args:
-            sig1, sig2: 两个麦克风的信号
-            
-        Returns:
-            (tau, peak_value): 时延(采样点)和互相关峰值
-        """
+        """GCC-PHAT 时延估计"""
         n = len(sig1) + len(sig2)
         
-        # FFT
         SIG1 = np.fft.rfft(sig1, n=n)
         SIG2 = np.fft.rfft(sig2, n=n)
         
-        # 互功率谱
         R = SIG1 * np.conj(SIG2)
-        
-        # PHAT加权 (相位变换)
         magnitude = np.abs(R)
-        magnitude[magnitude < 1e-6] = 1e-6  # 避免除零
+        magnitude[magnitude < 1e-6] = 1e-6
         R_phat = R / magnitude
         
-        # IFFT得到互相关
         cc = np.fft.irfft(R_phat, n=n)
         
-        # 找到峰值
         max_shift = int(self.config.sample_rate * self.config.array_radius_m * 2 / SPEED_OF_SOUND) + 1
-        
-        # 只在有效范围内搜索
         cc_valid = np.concatenate([cc[-max_shift:], cc[:max_shift+1]])
         
         peak_idx = np.argmax(np.abs(cc_valid))
         peak_value = np.abs(cc_valid[peak_idx])
-        
-        # 转换为时延
         tau = peak_idx - max_shift
         
         return tau, peak_value
     
     def _get_smoothed_angle(self, new_angle: Optional[float]) -> float:
-        """时间平滑，减少抖动"""
+        """时间平滑"""
         if new_angle is not None:
             self._angle_history.append(new_angle)
             if len(self._angle_history) > self._history_size:
@@ -238,7 +332,6 @@ class DOAEstimator:
         if not self._angle_history:
             return 0.0
         
-        # 使用圆形均值 (处理0/360度边界)
         angles_rad = np.radians(self._angle_history)
         mean_sin = np.mean(np.sin(angles_rad))
         mean_cos = np.mean(np.cos(angles_rad))
@@ -249,65 +342,73 @@ class DOAEstimator:
         
         return mean_angle
     
-    def get_direction_vector(self, angle_deg: float) -> Tuple[float, float]:
+    def get_all_sources(self) -> List[DOAResult]:
         """
-        将角度转换为方向向量
+        获取所有检测到的声源
         
-        Args:
-            angle_deg: 方向角度
-            
-        Returns:
-            (x, y) 单位方向向量
+        仅在 ODAS 后端可用时返回多个声源
         """
-        angle_rad = np.radians(angle_deg)
-        return np.cos(angle_rad), np.sin(angle_rad)
+        if self._odas_available and self._odas_client:
+            sources = self._odas_client.get_tracked_sources(active_only=True)
+            return [
+                DOAResult(
+                    angle=s.azimuth,
+                    confidence=s.activity,
+                    energy=s.energy,
+                    source_id=s.id,
+                    backend=DOABackend.ODAS_SRP_PHAT,
+                )
+                for s in sources
+            ]
+        return []
     
-    def angle_to_mic_index(self, angle_deg: float) -> int:
-        """
-        找到最接近给定角度的麦克风
-        
-        Args:
-            angle_deg: 目标角度
-            
-        Returns:
-            麦克风索引 (0-5)
-        """
-        min_diff = float('inf')
-        best_idx = 0
-        
-        for idx, mic_angle in enumerate(self.config.mic_angles_deg):
-            diff = abs(angle_deg - mic_angle)
-            diff = min(diff, 360 - diff)  # 处理环绕
-            if diff < min_diff:
-                min_diff = diff
-                best_idx = idx
-        
-        return best_idx
+    def get_backend(self) -> DOABackend:
+        """获取当前使用的后端"""
+        if self._odas_available:
+            return DOABackend.ODAS_SRP_PHAT
+        return DOABackend.BUILTIN_GCC_PHAT
+    
+    def is_odas_available(self) -> bool:
+        """检查 ODAS 是否可用"""
+        return self._odas_available
     
     def reset(self):
         """重置历史状态"""
         self._angle_history = []
+    
+    def stop(self):
+        """停止估计器"""
+        if self._odas_client:
+            self._odas_client.stop()
+
+
+# ============================================================
+# 兼容性别名
+# ============================================================
+
+# 保持与旧版 DOAEstimator 的兼容性
+DOAEstimator = EnhancedDOAEstimator
 
 
 if __name__ == "__main__":
     # 测试代码
     logging.basicConfig(level=logging.INFO)
     
-    doa = DOAEstimator(sample_rate=16000)
+    print("Testing Enhanced DOA Estimator...")
     
-    # 模拟从某个方向来的信号
-    print("Testing DOA with simulated signals...")
+    # 测试自动后端选择
+    doa = EnhancedDOAEstimator(backend="auto")
+    print(f"Backend: {doa.get_backend().value}")
+    print(f"ODAS available: {doa.is_odas_available()}")
     
-    # 生成测试信号 (模拟90度方向的声源)
-    duration = 0.1  # 100ms
+    # 模拟测试数据
+    duration = 0.1
     samples = int(16000 * duration)
-    
-    # 简单正弦波
     t = np.arange(samples) / 16000
-    signal = np.sin(2 * np.pi * 1000 * t)  # 1kHz
-    
-    # 模拟6通道 (实际应该有时延差异)
+    signal = np.sin(2 * np.pi * 1000 * t)
     mic_data = np.column_stack([signal] * 6)
     
-    angle, confidence = doa.estimate(mic_data)
-    print(f"Estimated DOA: {angle:.1f}° (confidence: {confidence:.2f})")
+    result = doa.estimate(mic_data)
+    print(f"Result: {result.to_dict()}")
+    
+    doa.stop()

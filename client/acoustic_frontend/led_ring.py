@@ -244,6 +244,74 @@ class LEDRing:
         with self._lock:
             self._current_pattern = LEDPattern.DOA_INDICATOR
     
+    # 说话人角色颜色映射
+    SPEAKER_ROLE_COLORS = {
+        "doctor": Color(0, 150, 255, 31),      # 医疗蓝
+        "patient": Color(0, 255, 120, 31),     # 健康绿
+        "family": Color(255, 180, 0, 31),      # 温暖橙
+        "unknown": Color(200, 200, 200, 25),   # 灰白
+    }
+    
+    def show_speaker_doa(self, angle: float, speaker_role: str = "unknown"):
+        """
+        显示带说话人颜色的DOA指示
+        
+        不同说话人使用不同颜色:
+        - doctor: 蓝色
+        - patient: 绿色
+        - family: 橙色
+        
+        Args:
+            angle: DOA角度
+            speaker_role: 说话人角色
+        """
+        # 获取角色颜色
+        color = self.SPEAKER_ROLE_COLORS.get(
+            speaker_role.lower(), 
+            self.SPEAKER_ROLE_COLORS["unknown"]
+        )
+        
+        # 每个LED覆盖30度 (360/12)
+        led_index = int((angle % 360) / 30) % self.NUM_LEDS
+        
+        # 清空所有LED
+        self._buffer = [Colors.OFF for _ in range(self.NUM_LEDS)]
+        
+        # 主方向LED使用角色颜色
+        self._buffer[led_index] = color
+        
+        # 相邻LED稍暗（渐变效果）
+        left = (led_index - 1) % self.NUM_LEDS
+        right = (led_index + 1) % self.NUM_LEDS
+        dim_color = Color(color.r // 2, color.g // 2, color.b // 2, color.brightness // 2)
+        self._buffer[left] = dim_color
+        self._buffer[right] = dim_color
+        
+        self._flush()
+    
+    def show_multi_speakers(self, speakers: list):
+        """
+        同时显示多个说话人的DOA
+        
+        Args:
+            speakers: 列表，每个元素为 {"angle": float, "role": str}
+        """
+        self._buffer = [Colors.OFF for _ in range(self.NUM_LEDS)]
+        
+        for speaker in speakers:
+            angle = speaker.get("angle", 0)
+            role = speaker.get("role", "unknown")
+            
+            color = self.SPEAKER_ROLE_COLORS.get(
+                role.lower(),
+                self.SPEAKER_ROLE_COLORS["unknown"]
+            )
+            
+            led_index = int((angle % 360) / 30) % self.NUM_LEDS
+            self._buffer[led_index] = color
+        
+        self._flush()
+
     def _animate_doa(self, angle: float):
         """渲染DOA指示"""
         # 每个LED覆盖30度 (360/12)
