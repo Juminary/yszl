@@ -299,7 +299,17 @@ class RAGModule:
         if retrieved:
             context_parts.append("【参考资料】")
             for i, doc in enumerate(retrieved[:3], 1):
-                context_parts.append(f"资料{i}：{doc['content']}")
+                metadata = doc.get('metadata', {})
+                label = metadata.get('label', '')
+                diseases = metadata.get('related_diseases', '')
+                # 构建标签信息
+                tags = []
+                if label:
+                    tags.append(f"科室：{label}")
+                if diseases:
+                    tags.append(f"相关疾病：{diseases}")
+                tag_str = f"【{'，'.join(tags)}】" if tags else ""
+                context_parts.append(f"资料{i}{tag_str}：{doc['content']}")
             
             print(f"[RAG 决策] ℹ 知识图谱无结果，开启向量检索 (命中 {len(retrieved)} 条)", flush=True)
             return "\n".join(context_parts)

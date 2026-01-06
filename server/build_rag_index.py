@@ -29,8 +29,8 @@ class RAGModule:
     def __init__(self, 
                  embedding_model: str = "BAAI/bge-small-zh-v1.5",
                  index_path: str = "data/rag_index",
-                 knowledge_base_path: str = "data/knowledge_base.json",
-                 device: str = "cpu",
+                 knowledge_base_path: str = "data/Huatuo26M-Lite/format_data.jsonl",
+                 device: str = "cuda",
                  top_k: int = 3,
                  min_score: float = 0.5):
         """
@@ -46,8 +46,10 @@ class RAGModule:
         """
         self.top_k = top_k
         self.min_score = min_score
-        self.index_path = Path(index_path)
-        self.knowledge_base_path = Path(knowledge_base_path)
+        # 使用脚本所在目录作为基准路径
+        script_dir = Path(__file__).parent
+        self.index_path = script_dir / index_path
+        self.knowledge_base_path = script_dir / knowledge_base_path
         self.documents = []  # 存储原始文档
         self.index = None    # FAISS 索引
         self.model = None    # Embedding 模型
@@ -139,42 +141,81 @@ class RAGModule:
         logger.info(f"Index saved to {self.index_path}")
     
     def _build_index_from_knowledge_base(self):
-        """从知识库文件构建索引"""
+        """从知识库文件构建索引（支持 JSON 和 JSONL 格式）"""
+        from tqdm import tqdm
+        
         logger.info(f"Building index from {self.knowledge_base_path}")
         
-        with open(self.knowledge_base_path, 'r', encoding='utf-8') as f:
-            knowledge_base = json.load(f)
-        
-        # 提取文档内容
         self.documents = []
         texts = []
         
-        for item in knowledge_base:
-            content = item.get('content', '')
-            if content:
-                self.documents.append({
-                    'id': item.get('id', len(self.documents)),
-                    'content': content,
-                    'metadata': item.get('metadata', {})
-                })
-                texts.append(content)
+        # 根据文件扩展名选择读取方式
+        if str(self.knowledge_base_path).endswith('.jsonl'):
+            # JSONL 格式（华佗数据集）
+            with open(self.knowledge_base_path, 'r', encoding='utf-8') as f:
+                for i, line in enumerate(tqdm(f, desc="读取数据")):
+                    try:
+                        item = json.loads(line.strip())
+                        question = item.get('question', '')
+                        answer = item.get('answer', '')
+                        content = f"问题：{question}\n答案：{answer}"
+                        
+                        self.documents.append({
+                            'id': item.get('id', i),
+                            'content': content,
+                            'question': question,
+                            'answer': answer,
+                            'metadata': {
+                                'label': item.get('label', ''),
+                                'related_diseases': item.get('related_diseases', ''),
+                                'source': 'Huatuo26M-Lite'
+                            }
+                        })
+                        texts.append(content)
+                    except json.JSONDecodeError:
+                        continue
+        else:
+            # JSON 格式
+            with open(self.knowledge_base_path, 'r', encoding='utf-8') as f:
+                knowledge_base = json.load(f)
+            for item in knowledge_base:
+                content = item.get('content', '')
+                if content:
+                    self.documents.append({
+                        'id': item.get('id', len(self.documents)),
+                        'content': content,
+                        'metadata': item.get('metadata', {})
+                    })
+                    texts.append(content)
         
         if not texts:
             logger.warning("No documents found in knowledge base")
             self._create_empty_index()
             return
         
-        # 生成 embeddings
-        logger.info(f"Generating embeddings for {len(texts)} documents...")
-        embeddings = self.model.encode(texts, normalize_embeddings=True)
+        print(f"加载了 {len(texts)} 条文档，开始生成向量...")
+        
+        # 分批生成 embeddings
+        batch_size = 64
+        all_embeddings = []
+        for i in tqdm(range(0, len(texts), batch_size), desc="生成向量"):
+            batch_texts = texts[i:i+batch_size]
+            batch_embeddings = self.model.encode(
+                batch_texts, 
+                normalize_embeddings=True,
+                show_progress_bar=False
+            )
+            all_embeddings.append(batch_embeddings)
+        
+        embeddings = np.vstack(all_embeddings).astype(np.float32)
         
         # 创建 FAISS 索引
         self._create_empty_index()
-        self.index.add(embeddings.astype(np.float32))
+        self.index.add(embeddings)
         
         # 保存索引
         self._save_index()
-        logger.info(f"Index built with {len(self.documents)} documents")
+        print(f"✓ 索引构建完成，共 {len(self.documents)} 条文档")
     
     def add_documents(self, documents: List[Dict]):
         """
