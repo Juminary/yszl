@@ -89,6 +89,77 @@ audio:
   channels: 1
   chunk_size: 1024
   format: "wav"
+
+# 声学前端增强配置 (ReSpeaker 6-Mic Circular Array HAT)
+acoustic_frontend:
+  # 总开关
+  enabled: true
+  
+  # 硬件设备配置
+  device:
+    type: "respeaker_6mic"          # 设备类型: respeaker_6mic, respeaker_4mic, usb, default
+    sample_rate: 16000              # 采样率 (Hz)
+    chunk_duration_ms: 30           # 每帧时长 (ms)，影响延迟和处理粒度
+    total_channels: 8               # 总通道数 (6麦克风 + 2回声)
+    mic_channels: [0, 1, 2, 3, 4, 5]    # 麦克风通道索引
+    echo_channels: [6, 7]               # 回声参考通道索引
+    button_gpio: 26                 # 用户按钮 GPIO 引脚
+  
+  # 阵列几何参数 (6麦克风环形排列)
+  array:
+    mic_angles_deg: [0, 60, 120, 180, 240, 300]  # 各麦克风角度位置
+    radius_m: 0.035                 # 阵列半径 (米)，约3.5cm
+  
+  # DOA 声源定位配置
+  doa:
+    enabled: true
+    algorithm: "gcc_phat"           # 算法: gcc_phat, srp_phat, music
+    fft_size: 512                   # FFT窗口大小
+    num_directions: 360             # 搜索方向数 (角度分辨率)
+    mic_pairs: [[0, 3], [1, 4], [2, 5]]  # 用于TDOA的麦克风对 (对角)
+    smoothing_window: 5             # 时间平滑窗口大小 (帧数)
+  
+  # 波束成形配置
+  beamforming:
+    enabled: true
+    method: "das"                   # 方法: das (延时求和), mvdr
+    interpolation_factor: 4         # 分数延时插值倍率
+    use_weights: true               # 是否使用加权
+    adaptive_steering: true         # 自适应跟踪DOA方向
+    smoothing_factor: 0.3           # 方向平滑系数 (0-1)
+  
+  # 回声消除 (AEC) 配置
+  aec:
+    enabled: true
+    algorithm: "nlms"               # 算法: nlms, rls
+    filter_length: 256              # 自适应滤波器长度 (采样点)
+    step_size: 0.1                  # NLMS步长 (学习率)
+    regularization: 1.0e-6          # 正则化项
+    doubletalk_threshold: 0.6       # 双讲检测阈值
+    enable_residual_suppression: true   # 残余回声抑制
+    suppression_factor: 0.3         # 抑制因子
+    use_hardware_reference: true    # 使用硬件回声参考通道 (推荐)
+  
+  # VAD 语音活动检测配置
+  vad:
+    enabled: true
+    method: "energy"                # 方法: energy, silero, webrtc
+    energy_threshold: 0.02          # 能量阈值 (归一化)
+    min_speech_duration_ms: 100     # 最小语音持续时间 (ms)
+    min_silence_duration_ms: 300    # 最小静音持续时间 (ms)
+  
+  # LED 环形灯配置
+  led:
+    enabled: true
+    brightness: 15                  # 全局亮度 (0-31)
+    doa_indicator: true             # 显示声源方向
+    status_patterns: true           # 显示状态模式 (监听/说话/思考等)
+    colors:                         # 自定义颜色 (RGB)
+      listening: [100, 180, 255]    # 监听状态 - 医疗蓝
+      speaking: [0, 200, 100]       # 说话状态 - 医疗绿
+      thinking: [255, 200, 0]       # 思考状态 - 橙黄
+      error: [255, 0, 0]            # 错误状态 - 红色
+
   
 # 唤醒词配置
 wakeword:
