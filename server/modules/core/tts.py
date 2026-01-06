@@ -94,7 +94,7 @@ class TTSModule:
             if not os.path.exists(model_dir):
                 logger.warning(f"CosyVoice model not found at {model_dir} and download failed")
     
-    def synthesize(self, text: str, output_path: str = None, 
+    def synthesize(self, text: str, output_path: str = None,
                    speaker: str = None, language: str = "zh-cn",
                    speed: float = 1.0, style: str = None,
                    instruct: str = None, voice_clone_id: str = None) -> Dict:
@@ -122,26 +122,26 @@ class TTSModule:
                 "text": text,
                 "error": "CosyVoice model not available"
             }
-        
+
         try:
-            import torchaudio
-            
             # 生成输出路径
             if output_path is None:
                 base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                 temp_dir = Path(base_dir) / "temp"
                 temp_dir.mkdir(exist_ok=True)
                 output_path = str(temp_dir / f"tts_{abs(hash(text))}.wav")
-            
+
             # 将长文本拆句，避免一次性推理被截断
             text_segments = self._split_text(text, max_len=120)
+
+            audio_outputs = []
 
             # 检查是否使用音色克隆
             if voice_clone_id and voice_clone_id in self.voice_clones:
                 # 使用音色克隆
                 prompt_wav = self.voice_clones[voice_clone_id]
-                
-                # 从speaker_db获取prompt_text（如果存在）
+
+                # 从 speaker_db 获取 prompt_text（如果存在）
                 prompt_text = "你好，我是医生，很高兴为您服务。"  # 默认提示文本
                 try:
                     speaker_db_path = Path(__file__).parent.parent.parent / "data" / "speaker_db.pkl"
@@ -153,16 +153,19 @@ class TTSModule:
                             metadata = speaker_db[voice_clone_id].get('metadata', {})
                             if metadata.get('prompt_text'):
                                 prompt_text = metadata['prompt_text']
-                                # 限制prompt_text长度（建议不超过50字，约10秒）
+                                # 限制 prompt_text 长度（建议不超过 50 字，约 10 秒）
                                 if len(prompt_text) > 50:
                                     logger.warning(f"Prompt text too long ({len(prompt_text)} chars), truncating to 50 chars")
                                     prompt_text = prompt_text[:50]
                 except Exception as e:
                     logger.warning(f"Failed to load prompt_text from speaker_db: {e}")
-                
-                logger.info(f"Using voice clone: {voice_clone_id}, prompt_text: {prompt_text[:30]}... ({len(prompt_text)} chars), text: {text[:50]}...")
-                
-                audio_outputs = []
+
+                logger.info(
+                    f"Using voice clone: {voice_clone_id}, "
+                    f"prompt_text: {prompt_text[:30]}... ({len(prompt_text)} chars), "
+                    f"text: {text[:50]}..."
+                )
+
                 try:
                     for segment in text_segments:
                         for output in self.model.inference_zero_shot(
@@ -176,39 +179,26 @@ class TTSModule:
                         ):
                             if 'tts_speech' in output and output['tts_speech'] is not None:
                                 audio_outputs.append(output['tts_speech'])
-                    
+
                     # 如果音色克隆失败（没有输出），回退到默认音色
                     if not audio_outputs:
-                        logger.warning(f"Voice clone synthesis failed, falling back to default voice")
+                        logger.warning("Voice clone synthesis produced no output, falling back to default voice")
                         raise ValueError("Voice clone synthesis produced no output")
                 except Exception as e:
                     logger.error(f"Voice clone synthesis failed: {e}, falling back to default voice")
                     # 回退到默认音色
                     voice_clone_id = None
-                    if speaker is None and self.available_spks:
-                        speaker = self.available_spks[0]
-                    logger.info(f"Falling back to speaker: {speaker}, text: {text[:50]}...")
                     audio_outputs = []
-                    for segment in text_segments:
-                        for output in self.model.inference_sft(
-                            tts_text=segment,
-                            spk_id=speaker,
-                            stream=False,
-                            speed=speed
-                        ):
-                            if 'tts_speech' in output and output['tts_speech'] is not None:
-                                audio_outputs.append(output['tts_speech'])
-            else:
-                # 使用标准语音合成
+
+            # 如果没有使用 / 或已经从音色克隆回退，则使用标准语音合成
+            if not audio_outputs:
                 # 选择说话人
                 if speaker is None and self.available_spks:
                     # 默认使用第一个可用的说话人
                     speaker = self.available_spks[0]
-                
+
                 logger.info(f"Synthesizing with speaker: {speaker}, text: {text[:50]}...")
-                
-                # 使用 inference_sft 进行标准语音合成（不带指令朗读）
-                audio_outputs = []
+
                 for segment in text_segments:
                     for output in self.model.inference_sft(
                         tts_text=segment,
@@ -216,10 +206,11 @@ class TTSModule:
                         stream=False,
                         speed=speed
                     ):
-                        audio_outputs.append(output['tts_speech'])
-            
+                        if 'tts_speech' in output and output['tts_speech'] is not None:
+                            audio_outputs.append(output['tts_speech'])
+
             if audio_outputs:
-                # 合并音频
+                # 合并音频（audio_outputs 是 [1, T] 的列表，按时间维拼接）
                 audio = torch.cat(audio_outputs, dim=1)
                 
                 # 检查音频是否有效
