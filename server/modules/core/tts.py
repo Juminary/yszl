@@ -37,7 +37,7 @@ except ImportError as e:
 class TTSModule:
     """语音合成模块 - 使用CosyVoice-300M-Instruct"""
     
-    def __init__(self, model_name: str = None, device: str = "cuda"):
+    def __init__(self, model_name: str = None, device: str = "cuda", play_prompt: bool = False):
         """
         初始化TTS模块
         """
@@ -50,6 +50,10 @@ class TTSModule:
         
         self.model = None
         self.sample_rate = 22050
+        # 存储已注册的音色克隆 {speaker_id: audio_path}
+        self.voice_clones = {}
+        # 是否保留提示文本在最终音频中的朗读（默认关闭，避免输出“你好，我是医生”）
+        self.play_prompt = play_prompt
         
         # CosyVoice 模型路径（从 core/ 往上走: core/ -> modules/ -> server/）
         models_parent_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'models', 'tts')
@@ -78,6 +82,9 @@ class TTSModule:
                 self.available_spks = self.model.list_available_spks()
                 logger.info(f"Available speakers: {self.available_spks}")
                 
+                # 加载已注册的音色克隆
+                self._load_voice_clones()
+                
             except Exception as e:
                 logger.error(f"Failed to load CosyVoice: {e}")
                 self.model = None
@@ -90,18 +97,19 @@ class TTSModule:
     def synthesize(self, text: str, output_path: str = None, 
                    speaker: str = None, language: str = "zh-cn",
                    speed: float = 1.0, style: str = None,
-                   instruct: str = None) -> Dict:
+                   instruct: str = None, voice_clone_id: str = None) -> Dict:
         """
         合成语音
         
         Args:
             text: 要合成的文本
             output_path: 输出文件路径
-            speaker: 说话人ID (如 "中文女", "中文男")
+            speaker: 说话人ID (如 "中文女", "中文男")，如果voice_clone_id不为None则忽略此参数
             language: 语言
             speed: 语速
             style: 风格 (soothing, professional, friendly)
             instruct: 指令文本，用于控制语音风格
+            voice_clone_id: 音色克隆ID（如果提供，将使用该音色克隆）
         
         Returns:
             合成结果
@@ -125,46 +133,152 @@ class TTSModule:
                 temp_dir.mkdir(exist_ok=True)
                 output_path = str(temp_dir / f"tts_{abs(hash(text))}.wav")
             
-            # 选择说话人
-            if speaker is None and self.available_spks:
-                # 默认使用第一个可用的说话人
-                speaker = self.available_spks[0]
-            
-            logger.info(f"Synthesizing with speaker: {speaker}, text: {text[:50]}...")
-            
-            # 使用 inference_sft 进行标准语音合成（不带指令朗读）
-            audio_outputs = []
-            for output in self.model.inference_sft(
-                tts_text=text,
-                spk_id=speaker,
-                stream=False,
-                speed=speed
-            ):
-                audio_outputs.append(output['tts_speech'])
+            # 将长文本拆句，避免一次性推理被截断
+            text_segments = self._split_text(text, max_len=120)
+
+            # 检查是否使用音色克隆
+            if voice_clone_id and voice_clone_id in self.voice_clones:
+                # 使用音色克隆
+                prompt_wav = self.voice_clones[voice_clone_id]
+                
+                # 从speaker_db获取prompt_text（如果存在）
+                prompt_text = "你好，我是医生，很高兴为您服务。"  # 默认提示文本
+                try:
+                    speaker_db_path = Path(__file__).parent.parent.parent / "data" / "speaker_db.pkl"
+                    if speaker_db_path.exists():
+                        import pickle
+                        with open(speaker_db_path, 'rb') as f:
+                            speaker_db = pickle.load(f)
+                        if voice_clone_id in speaker_db:
+                            metadata = speaker_db[voice_clone_id].get('metadata', {})
+                            if metadata.get('prompt_text'):
+                                prompt_text = metadata['prompt_text']
+                                # 限制prompt_text长度（建议不超过50字，约10秒）
+                                if len(prompt_text) > 50:
+                                    logger.warning(f"Prompt text too long ({len(prompt_text)} chars), truncating to 50 chars")
+                                    prompt_text = prompt_text[:50]
+                except Exception as e:
+                    logger.warning(f"Failed to load prompt_text from speaker_db: {e}")
+                
+                logger.info(f"Using voice clone: {voice_clone_id}, prompt_text: {prompt_text[:30]}... ({len(prompt_text)} chars), text: {text[:50]}...")
+                
+                audio_outputs = []
+                try:
+                    for segment in text_segments:
+                        for output in self.model.inference_zero_shot(
+                            tts_text=segment,
+                            prompt_text=prompt_text,
+                            prompt_wav=prompt_wav,
+                            zero_shot_spk_id=voice_clone_id,
+                            stream=False,
+                            speed=speed,
+                            play_prompt=self.play_prompt
+                        ):
+                            if 'tts_speech' in output and output['tts_speech'] is not None:
+                                audio_outputs.append(output['tts_speech'])
+                    
+                    # 如果音色克隆失败（没有输出），回退到默认音色
+                    if not audio_outputs:
+                        logger.warning(f"Voice clone synthesis failed, falling back to default voice")
+                        raise ValueError("Voice clone synthesis produced no output")
+                except Exception as e:
+                    logger.error(f"Voice clone synthesis failed: {e}, falling back to default voice")
+                    # 回退到默认音色
+                    voice_clone_id = None
+                    if speaker is None and self.available_spks:
+                        speaker = self.available_spks[0]
+                    logger.info(f"Falling back to speaker: {speaker}, text: {text[:50]}...")
+                    audio_outputs = []
+                    for segment in text_segments:
+                        for output in self.model.inference_sft(
+                            tts_text=segment,
+                            spk_id=speaker,
+                            stream=False,
+                            speed=speed
+                        ):
+                            if 'tts_speech' in output and output['tts_speech'] is not None:
+                                audio_outputs.append(output['tts_speech'])
+            else:
+                # 使用标准语音合成
+                # 选择说话人
+                if speaker is None and self.available_spks:
+                    # 默认使用第一个可用的说话人
+                    speaker = self.available_spks[0]
+                
+                logger.info(f"Synthesizing with speaker: {speaker}, text: {text[:50]}...")
+                
+                # 使用 inference_sft 进行标准语音合成（不带指令朗读）
+                audio_outputs = []
+                for segment in text_segments:
+                    for output in self.model.inference_sft(
+                        tts_text=segment,
+                        spk_id=speaker,
+                        stream=False,
+                        speed=speed
+                    ):
+                        audio_outputs.append(output['tts_speech'])
             
             if audio_outputs:
                 # 合并音频
                 audio = torch.cat(audio_outputs, dim=1)
+                
+                # 检查音频是否有效
+                if audio.shape[1] == 0:
+                    logger.error("Generated audio is empty")
+                    return {
+                        "audio": None,
+                        "sample_rate": 0,
+                        "output_path": None,
+                        "text": text,
+                        "error": "Generated audio is empty"
+                    }
                 
                 # 保存音频 - 使用 soundfile 避免 torchcodec 依赖
                 import soundfile as sf
                 audio_np = audio.cpu().numpy().T  # (channels, samples) -> (samples, channels)
                 if audio_np.ndim == 1:
                     audio_np = audio_np.reshape(-1, 1)
+                
+                # 确保音频数据有效
+                if len(audio_np) == 0:
+                    logger.error("Audio numpy array is empty")
+                    return {
+                        "audio": None,
+                        "sample_rate": 0,
+                        "output_path": None,
+                        "text": text,
+                        "error": "Audio numpy array is empty"
+                    }
+                
                 sf.write(output_path, audio_np, self.sample_rate)
                 
-                logger.info(f"TTS success: {output_path}")
+                # 验证文件是否成功创建
+                if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+                    logger.error(f"Failed to save audio file: {output_path}")
+                    return {
+                        "audio": None,
+                        "sample_rate": 0,
+                        "output_path": None,
+                        "text": text,
+                        "error": "Failed to save audio file"
+                    }
                 
-                return {
+                logger.info(f"TTS success: {output_path}, duration: {len(audio_np) / self.sample_rate:.2f}s")
+                
+                result = {
                     "audio": audio.cpu().numpy(),
                     "sample_rate": self.sample_rate,
                     "output_path": output_path,
                     "text": text,
-                    "speaker": speaker,
+                    "speaker": speaker if not voice_clone_id else None,
+                    "voice_clone_id": voice_clone_id if voice_clone_id else None,
                     "instruct": instruct,
-                    "method": "cosyvoice"
+                    "method": "cosyvoice_zero_shot" if voice_clone_id else "cosyvoice",
+                    "duration": len(audio_np) / self.sample_rate
                 }
+                return result
             else:
+                logger.error("No audio outputs generated")
                 return {
                     "audio": None,
                     "sample_rate": 0,
@@ -184,6 +298,35 @@ class TTSModule:
                 "text": text,
                 "error": str(e)
             }
+
+    def _split_text(self, text: str, max_len: int = 120):
+        """
+        将长文本拆分为短句，减少TTS截断风险
+        """
+        import re
+        if len(text) <= max_len:
+            return [text]
+
+        # 按句号/问号/感叹号/分号切分
+        sentences = re.split(r'(?<=[。！？!?；;])', text)
+        chunks = []
+        buffer = ""
+        for sent in sentences:
+            sent = sent.strip()
+            if not sent:
+                continue
+            candidate = buffer + sent
+            if len(candidate) <= max_len:
+                buffer = candidate
+            else:
+                if buffer:
+                    chunks.append(buffer)
+                buffer = sent
+        if buffer:
+            chunks.append(buffer)
+
+        # 如果拆分失败，至少返回原文本
+        return chunks or [text]
     
     def synthesize_with_emotion(self, text: str, emotion: str, 
                                 output_path: str = None) -> Dict:
@@ -213,6 +356,141 @@ class TTSModule:
     def list_speakers(self):
         """列出可用的说话人"""
         return self.available_spks if hasattr(self, 'available_spks') else []
+    
+    def _load_voice_clones(self):
+        """从声纹数据库和voice_clones目录加载已注册的音色克隆"""
+        try:
+            # 优先从voice_clones目录加载
+            voice_clone_dir = Path(__file__).parent.parent.parent / "data" / "voice_clones"
+            if voice_clone_dir.exists():
+                for audio_file in voice_clone_dir.glob("*.wav"):
+                    speaker_id = audio_file.stem  # 文件名（不含扩展名）作为speaker_id
+                    audio_path = str(audio_file)
+                    try:
+                        # 注册到CosyVoice
+                        prompt_text = "你好，我是医生，很高兴为您服务。"  # 默认提示文本
+                        success = self.model.add_zero_shot_spk(
+                            prompt_text=prompt_text,
+                            prompt_wav=audio_path,
+                            zero_shot_spk_id=speaker_id
+                        )
+                        if success:
+                            self.voice_clones[speaker_id] = audio_path
+                            logger.info(f"Loaded voice clone from directory: {speaker_id}")
+                        else:
+                            logger.warning(f"Failed to register voice clone for {speaker_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to load voice clone for {speaker_id}: {e}")
+            
+            # 也从speaker_db加载（如果voice_clones目录中没有）
+            speaker_db_path = Path(__file__).parent.parent.parent / "data" / "speaker_db.pkl"
+            if speaker_db_path.exists():
+                import pickle
+                with open(speaker_db_path, 'rb') as f:
+                    speaker_db = pickle.load(f)
+                
+                for speaker_id, speaker_info in speaker_db.items():
+                    # 如果已经在voice_clones中加载过，跳过
+                    if speaker_id in self.voice_clones:
+                        continue
+                    
+                    # 优先使用 metadata 中的 voice_clone_path，如果没有则使用 audio_path
+                    metadata = speaker_info.get('metadata', {})
+                    audio_path = metadata.get('voice_clone_path') or speaker_info.get('audio_path')
+                    
+                    if audio_path and os.path.exists(audio_path):
+                        try:
+                            # 从 metadata 获取 prompt_text，如果没有则使用默认值
+                            prompt_text = metadata.get('prompt_text', "你好，我是医生，很高兴为您服务。")
+                            
+                            # 限制prompt_text长度（建议不超过50字）
+                            if len(prompt_text) > 50:
+                                logger.warning(f"Prompt text too long ({len(prompt_text)} chars) for {speaker_id}, truncating to 50 chars")
+                                prompt_text = prompt_text[:50]
+                            
+                            # 注册到CosyVoice
+                            success = self.model.add_zero_shot_spk(
+                                prompt_text=prompt_text,
+                                prompt_wav=audio_path,
+                                zero_shot_spk_id=speaker_id
+                            )
+                            if success:
+                                self.voice_clones[speaker_id] = audio_path
+                                logger.info(f"Loaded voice clone from speaker_db: {speaker_id} (path: {audio_path})")
+                            else:
+                                logger.warning(f"Failed to register voice clone for {speaker_id}")
+                        except Exception as e:
+                            logger.warning(f"Failed to load voice clone for {speaker_id}: {e}")
+            
+            logger.info(f"Loaded {len(self.voice_clones)} voice clones total")
+        except Exception as e:
+            logger.error(f"Failed to load voice clones: {e}")
+    
+    def register_voice_clone(self, speaker_id: str, audio_path: str, prompt_text: str = None):
+        """
+        注册音色克隆
+        
+        Args:
+            speaker_id: 说话人ID
+            audio_path: 参考音频路径（至少3秒）
+            prompt_text: 提示文本（可选，用于控制语音风格）
+        
+        Returns:
+            bool: 是否注册成功
+        """
+        if self.model is None:
+            logger.error("CosyVoice model not available")
+            return False
+        
+        if not os.path.exists(audio_path):
+            logger.error(f"Audio file not found: {audio_path}")
+            return False
+        
+        try:
+            if prompt_text is None:
+                prompt_text = "你好，我是医生，很高兴为您服务。"
+            
+            # 检查并限制prompt_text长度（建议不超过50字）
+            original_length = len(prompt_text)
+            if len(prompt_text) > 50:
+                logger.warning(f"Prompt text too long ({original_length} chars), truncating to 50 chars for better performance")
+                prompt_text = prompt_text[:50]
+            
+            # 检查音频长度（建议3-10秒）
+            try:
+                import soundfile as sf
+                audio_data, sample_rate = sf.read(audio_path)
+                duration = len(audio_data) / sample_rate
+                if duration > 15:
+                    logger.warning(f"Audio duration too long ({duration:.2f}s), recommended: 3-10s. This may cause performance issues.")
+                elif duration < 2:
+                    logger.warning(f"Audio duration too short ({duration:.2f}s), recommended: 3-10s. This may affect voice clone quality.")
+            except Exception as e:
+                logger.warning(f"Failed to check audio duration: {e}")
+            
+            # 注册到CosyVoice
+            success = self.model.add_zero_shot_spk(
+                prompt_text=prompt_text,
+                prompt_wav=audio_path,
+                zero_shot_spk_id=speaker_id
+            )
+            
+            if success:
+                self.voice_clones[speaker_id] = audio_path
+                logger.info(f"Registered voice clone: {speaker_id}")
+                return True
+            else:
+                logger.error(f"Failed to register voice clone for {speaker_id}")
+                return False
+        except Exception as e:
+            logger.error(f"Error registering voice clone: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def list_voice_clones(self):
+        """列出所有已注册的音色克隆"""
+        return list(self.voice_clones.keys())
     
     def get_model_info(self) -> Dict:
         """获取模型信息"""

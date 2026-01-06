@@ -6,11 +6,23 @@ import json
 from py2neo import Graph,Node
 
 class MedicalGraph:
-    def __init__(self):
+    def __init__(self, host="localhost", port=7687, user="neo4j", password="12345"):
         cur_dir = '/'.join(os.path.abspath(__file__).split('/')[:-1])
         self.data_path = os.path.join(cur_dir, 'data/medical.json')
-        # Neo4j 5.x 本地连接（无验证）
-        self.g = Graph("bolt://localhost:7687")
+        # Neo4j 连接（支持认证）
+        try:
+            # 尝试使用认证连接
+            self.g = Graph(f"bolt://{host}:{port}", auth=(user, password))
+            # 测试连接
+            self.g.run("RETURN 1")
+            print(f"✓ Neo4j 连接成功: bolt://{host}:{port}")
+        except Exception as e:
+            print(f"✗ Neo4j 连接失败: {e}")
+            print("提示：")
+            print("  1. 确保 Neo4j 服务已启动: sudo systemctl start neo4j")
+            print("  2. 检查用户名和密码是否正确")
+            print("  3. 首次使用需要设置密码: neo4j-admin set-initial-password <password>")
+            raise
 
     '''读取文件'''
     def read_nodes(self):
@@ -260,7 +272,33 @@ class MedicalGraph:
 
 
 if __name__ == '__main__':
-    handler = MedicalGraph()
+    import yaml
+    import sys
+    
+    # 尝试从配置文件读取 Neo4j 连接信息
+    host = "localhost"
+    port = 7687
+    user = "neo4j"
+    password = "12345"
+    
+    try:
+        config_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'config.yaml')
+        if os.path.exists(config_path):
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f)
+                kg_config = config.get('knowledge_graph', {})
+                if kg_config.get('enabled'):
+                    host = kg_config.get('host', host)
+                    port = kg_config.get('port', 7474)  # HTTP 端口
+                    user = kg_config.get('user', user)
+                    password = kg_config.get('password', password)
+                    # Neo4j Bolt 协议使用 7687 端口
+                    port = 7687
+    except Exception as e:
+        print(f"警告：无法读取配置文件，使用默认值: {e}")
+    
+    print(f"连接 Neo4j: bolt://{host}:{port}, 用户: {user}")
+    handler = MedicalGraph(host=host, port=port, user=user, password=password)
     handler.create_graphnodes()
     handler.create_graphrels()
     # handler.export_data()

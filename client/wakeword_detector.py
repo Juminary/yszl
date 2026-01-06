@@ -122,7 +122,7 @@ class WakeWordDetector:
             return False, ""
     
     def listen_for_wakeword(self, capture, check_interval: float = 2.0,
-                           max_listen_time: float = 300.0) -> Tuple[bool, str]:
+                           max_listen_time: float = 300.0) -> Tuple[bool, str, str]:
         """
         持续监听唤醒词
         
@@ -132,7 +132,7 @@ class WakeWordDetector:
             max_listen_time: 最大监听时间（秒）
             
         Returns:
-            (是否检测到, 识别的文本)
+            (是否检测到, 识别的文本, 音频文件路径)
         """
         logger.info(f"Listening for wake word: '{self.wakeword}'")
         print(f"\n🎤 正在监听唤醒词: '{self.wakeword}'")
@@ -140,6 +140,7 @@ class WakeWordDetector:
         
         start_time = time.time()
         temp_audio = "temp_wakeword_check.wav"
+        detected_audio_path = None
         
         try:
             while time.time() - start_time < max_listen_time:
@@ -159,7 +160,11 @@ class WakeWordDetector:
                 
                 if detected:
                     print(f"\n✅ 检测到唤醒词！识别文本: '{text}'")
-                    return True, text
+                    # 保存检测到的音频文件，供后续使用
+                    detected_audio_path = "temp_wakeword_detected.wav"
+                    import shutil
+                    shutil.copy2(temp_audio, detected_audio_path)
+                    return True, text, detected_audio_path
                 
                 # 显示监听状态（每5秒显示一次）
                 elapsed = time.time() - start_time
@@ -170,14 +175,15 @@ class WakeWordDetector:
                 Path(temp_audio).unlink(missing_ok=True)
             
             logger.info("Wake word listening timeout")
-            return False, ""
+            return False, "", ""
             
         except KeyboardInterrupt:
             logger.info("Wake word listening interrupted")
-            return False, ""
+            return False, "", ""
         finally:
-            # 清理临时文件
-            Path(temp_audio).unlink(missing_ok=True)
+            # 清理临时文件（但保留检测到的音频文件）
+            if detected_audio_path != temp_audio:
+                Path(temp_audio).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

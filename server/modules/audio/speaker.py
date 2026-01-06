@@ -230,6 +230,11 @@ class SpeakerModule:
                     existing_embeddings = existing_embeddings[-10:]
                 self.speaker_db[speaker_id]["embeddings"] = existing_embeddings
                 self.speaker_db[speaker_id]["mean_embedding"] = np.mean(existing_embeddings, axis=0)
+                # 更新 metadata（如果提供了）
+                if metadata:
+                    if 'metadata' not in self.speaker_db[speaker_id]:
+                        self.speaker_db[speaker_id]['metadata'] = {}
+                    self.speaker_db[speaker_id]['metadata'].update(metadata)
                 action = "updated"
                 logger.info(f"Updated speaker {speaker_id} with {len(existing_embeddings)} samples")
             else:

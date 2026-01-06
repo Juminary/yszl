@@ -8,6 +8,17 @@ import os
 import sys
 import logging
 from pathlib import Path
+
+# 设置 HuggingFace 镜像（在导入其他库之前）
+if 'HF_ENDPOINT' not in os.environ:
+    os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+if 'HF_HOME' not in os.environ:
+    script_dir = Path(__file__).parent
+    os.environ['HF_HOME'] = str(script_dir / 'models')
+if 'SENTENCE_TRANSFORMERS_HOME' not in os.environ:
+    script_dir = Path(__file__).parent
+    os.environ['SENTENCE_TRANSFORMERS_HOME'] = str(script_dir / 'models')
+
 from tqdm import tqdm
 import numpy as np
 
@@ -50,7 +61,23 @@ def build_rag_index(
     
     # 1. 加载 Embedding 模型
     logger.info(f"加载 Embedding 模型: {embedding_model}")
-    model = SentenceTransformer(embedding_model, device=device)
+    # 设置缓存目录，优先使用本地已下载的模型
+    script_dir = Path(__file__).parent
+    cache_folder = str(script_dir / 'models')
+    logger.info(f"使用模型缓存目录: {cache_folder}")
+    logger.info(f"HuggingFace 镜像: {os.environ.get('HF_ENDPOINT', '未设置')}")
+    
+    try:
+        model = SentenceTransformer(
+            embedding_model, 
+            device=device,
+            cache_folder=cache_folder
+        )
+    except Exception as e:
+        logger.error(f"加载模型失败: {e}")
+        logger.info("提示：请确保已设置 HuggingFace 镜像环境变量")
+        logger.info("运行: source setup_mirrors.sh")
+        raise
     embedding_dim = model.get_sentence_embedding_dimension()
     logger.info(f"Embedding 维度: {embedding_dim}")
     

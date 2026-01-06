@@ -260,18 +260,61 @@ class VoiceAssistantClient:
     
     def register_speaker(self, speaker_id: str):
         """
-        注册说话人声纹
+        注册说话人声纹（同时注册音色克隆）
         
         Args:
             speaker_id: 说话人ID
         """
         try:
-            print(f"\n开始注册声纹，说话人ID: {speaker_id}")
-            print("请在提示音后说话（建议说15秒以上）...")
+            print(f"\n开始注册声纹和音色克隆，说话人ID: {speaker_id}")
+            print("=" * 50)
             
-            input("按Enter开始录音...")
+            # 1. 让用户输入要朗读的文本
+            print("\n【步骤1】请输入要朗读的文本（用于音色克隆）")
+            print("提示：")
+            print("  - 建议长度：15-50字（约3-10秒朗读）")
+            print("  - 文本过长可能导致音色克隆失败")
+            print("  - 示例：")
+            print("    • '你好，我是医生，很高兴为您服务。'")
+            print("    • '您好，我是张医生，有什么可以帮助您的吗？'")
+            print("    • '欢迎使用医疗语音助手，我是您的专属医生。'")
             
-            # 录制音频
+            while True:
+                prompt_text = input("\n请输入要朗读的文本（直接回车使用默认文本）: ").strip()
+                if not prompt_text:
+                    prompt_text = "你好，我是医生，很高兴为您服务。"
+                    print(f"使用默认文本: {prompt_text}")
+                    break
+                elif len(prompt_text) > 50:
+                    print(f"⚠️  文本过长（{len(prompt_text)}字），建议不超过50字")
+                    choice = input("是否继续使用此文本？(y/n，默认n): ").strip().lower()
+                    if choice == 'y':
+                        print("⚠️  警告：文本过长可能导致音色克隆失败")
+                        break
+                    else:
+                        print("请重新输入较短的文本")
+                elif len(prompt_text) < 10:
+                    print(f"⚠️  文本过短（{len(prompt_text)}字），建议至少15字")
+                    choice = input("是否继续使用此文本？(y/n，默认y): ").strip().lower()
+                    if choice != 'n':
+                        break
+                    else:
+                        print("请重新输入较长的文本")
+                else:
+                    break
+            
+            # 2. 显示文本，让用户准备
+            print(f"\n【步骤2】请准备朗读以下文本：")
+            print(f"  「{prompt_text}」")
+            print("\n提示：")
+            print("  - 请用自然、清晰的语气朗读")
+            print("  - 建议录音时长3-10秒")
+            print("  - 录音过程中请保持安静")
+            
+            input("\n准备好后，按Enter开始录音...")
+            
+            # 3. 录制音频
+            print("\n【步骤3】正在录音...（请开始朗读）")
             audio_path = f"temp_register_{speaker_id}.wav"
             audio = self.capture.record_with_vad(
                 max_duration=30.0,
@@ -280,33 +323,63 @@ class VoiceAssistantClient:
             )
             
             if len(audio) == 0:
-                print("未检测到语音，请重试")
+                print("❌ 未检测到语音，请重试")
                 return
             
-            # 发送到服务器
+            audio_duration = len(audio) / self.capture.sample_rate
+            print(f"✅ 录音完成，时长: {audio_duration:.2f}秒")
+            
+            # 检查录音时长
+            if audio_duration > 15:
+                print(f"⚠️  警告：录音时长过长（{audio_duration:.2f}秒），建议3-10秒")
+                print("   这可能导致音色克隆失败或性能问题")
+            elif audio_duration < 2:
+                print(f"⚠️  警告：录音时长过短（{audio_duration:.2f}秒），建议3-10秒")
+                print("   这可能影响音色克隆质量")
+            
+            # 4. 发送到服务器
+            print("\n【步骤4】正在上传并注册...")
             with open(audio_path, 'rb') as f:
                 files = {'audio': f}
-                data = {'speaker_id': speaker_id}
+                data = {
+                    'speaker_id': speaker_id,
+                    'prompt_text': prompt_text  # 传递提示文本
+                }
                 response = requests.post(
                     f"{self.server_url}/speaker/register",
                     files=files,
                     data=data,
-                    timeout=30
+                    timeout=60  # 增加超时时间，因为需要处理音色克隆
                 )
             
             if response.status_code == 200:
                 result = response.json()
-                print(f"声纹注册{result.get('action', 'completed')}: {speaker_id}")
-                print(f"样本数: {result.get('num_samples', 0)}")
+                print(f"\n✅ 声纹注册成功: {speaker_id}")
+                print(f"   样本数: {result.get('num_samples', 0)}")
+                
+                if result.get('voice_clone_registered'):
+                    print(f"✅ 音色克隆注册成功: {speaker_id}")
+                    print("   现在可以在对话中选择使用此音色了")
             else:
-                print(f"声纹注册失败: {response.text}")
+                    print(f"⚠️  音色克隆注册失败")
+                    if result.get('voice_clone_error'):
+                        print(f"   错误: {result.get('voice_clone_error')}")
+            else:
+                print(f"❌ 注册失败: {response.status_code}")
+                try:
+                    error_info = response.json()
+                    print(f"   错误信息: {error_info.get('error', response.text)}")
+                except:
+                    print(f"   错误信息: {response.text}")
             
             # 删除临时文件
             Path(audio_path).unlink(missing_ok=True)
             
         except Exception as e:
             logger.error(f"Speaker registration failed: {e}")
-            print(f"声纹注册失败: {e}")
+            print(f"❌ 注册失败: {e}")
+            import traceback
+            traceback.print_exc()
     
     def chat_once(self, use_vad: bool = True):
         """
@@ -400,9 +473,51 @@ class VoiceAssistantClient:
             print("说话后会自动识别并回复，按 Ctrl+C 退出")
         print("="*50)
         
+        # 选择音色克隆
+        voice_clone_id = None
+        try:
+            response = requests.get(f"{self.server_url}/voice-clone/list", timeout=30)  # 增加超时时间
+            if response.status_code == 200:
+                result = response.json()
+                voice_clones = result.get('voice_clones', [])
+                if voice_clones:
+                    print("\n可用的音色克隆：")
+                    print("0 - 使用默认音色")
+                    for idx, clone_id in enumerate(voice_clones, start=1):
+                        print(f"{idx} - {clone_id}")
+                    
+                    while True:
+                        try:
+                            choice = input("\n请选择要使用的音色（输入数字，0为默认音色）: ").strip()
+                            if choice == "0":
+                                voice_clone_id = None
+                                print("已选择默认音色")
+                                break
+                            elif choice.isdigit():
+                                idx = int(choice) - 1
+                                if 0 <= idx < len(voice_clones):
+                                    voice_clone_id = voice_clones[idx]
+                                    print(f"已选择音色: {voice_clone_id}")
+                                    break
+                                else:
+                                    print("无效的选择，请重新输入")
+                            else:
+                                print("无效的输入，请输入数字")
+                        except KeyboardInterrupt:
+                            print("\n已取消，使用默认音色")
+                            voice_clone_id = None
+                            break
+                else:
+                    print("\n没有可用的音色克隆，将使用默认音色")
+            else:
+                print("\n无法获取音色克隆列表，将使用默认音色")
+        except Exception as e:
+            logger.warning(f"Failed to list voice clones: {e}")
+            print("\n无法获取音色克隆列表，将使用默认音色")
+        
         # 如果启用了唤醒词，先检测唤醒词
         if self.wakeword_enabled and self.wakeword_detector:
-            detected, wakeword_text = self.wakeword_detector.listen_for_wakeword(
+            detected, wakeword_text, detected_audio_path = self.wakeword_detector.listen_for_wakeword(
                 capture=self.capture,
                 check_interval=2.0,  # 每2秒检测一次
                 max_listen_time=300.0  # 最多监听5分钟
@@ -462,17 +577,40 @@ class VoiceAssistantClient:
                 
                 print("处理中...")
                 
-                # 发送到服务器
+                # 发送到服务器（增加超时时间，TTS合成可能需要较长时间）
+                try:
+                    # 显示进度提示
+                    import threading
+                    progress_stop = threading.Event()
+                    
+                    def show_progress():
+                        dots = 0
+                        while not progress_stop.is_set():
+                            print(f"\r处理中{'...'[:dots%3+1]}", end='', flush=True)
+                            dots += 1
+                            time.sleep(0.5)
+                    
+                    progress_thread = threading.Thread(target=show_progress, daemon=True)
+                    progress_thread.start()
+                    
                 try:
                     with open(temp_audio, 'rb') as f:
                         files = {'audio': f}
                         data = {'session_id': self.session_id}
+                            # 如果选择了音色克隆，添加到请求中
+                            if voice_clone_id:
+                                data['voice_clone_id'] = voice_clone_id
+                            else:
+                                data['voice_clone_id'] = '0'  # 明确指定使用默认音色
                         response = requests.post(
                             f"{self.server_url}/chat",
                             files=files,
                             data=data,
-                            timeout=60
+                                timeout=180  # 增加到180秒，TTS合成特别是音色克隆可能需要更长时间
                         )
+                    finally:
+                        progress_stop.set()
+                        print()  # 换行
                     
                     if response.status_code == 200:
                         # 从响应头获取信息（URL解码中文）
@@ -503,6 +641,11 @@ class VoiceAssistantClient:
                     # 删除临时文件
                     Path(temp_audio).unlink(missing_ok=True)
                     
+                except requests.exceptions.Timeout:
+                    logger.error("Chat request timeout (TTS synthesis may take too long)")
+                    print("\n⚠️ 请求超时：语音合成可能需要更长时间，请重试")
+                    print("   提示：如果使用音色克隆，合成时间会更长（可能需要30-60秒）")
+                    print("   建议：可以尝试使用默认音色，或等待服务器处理完成")
                 except Exception as e:
                     logger.error(f"Chat request failed: {e}")
                     print(f"请求失败: {e}")
@@ -762,10 +905,11 @@ class VoiceAssistantClient:
             return
         
         print("\n可用命令:")
+        print("  talk     - 连续语音对话（推荐，支持音色选择）")
         print("  chat     - 语音对话（麦克风输入）")
         print("  dia      - 连续文字对话")
         print("  tchat    - TTS+ASR测试（文字转语音后发服务器）")
-        print("  register - 注册声纹")
+        print("  register - 注册声纹（同时注册音色克隆）")
         print("  speakers - 查看已注册的说话人（需要服务器支持）")
         print("  quit     - 退出")
         print()
@@ -777,6 +921,9 @@ class VoiceAssistantClient:
                 if command == 'quit' or command == 'q':
                     print("再见！")
                     break
+                
+                elif command == 'talk' or command == 't':
+                    self.voice_chat_loop()
                     
                 elif command == 'chat' or command == 'c':
                     self.voice_chat_loop()

@@ -42,8 +42,33 @@ def read_json_lists(list_file):
 
 
 def load_wav(wav, target_sr, min_sr=16000):
-    speech, sample_rate = torchaudio.load(wav, backend='soundfile')
-    speech = speech.mean(dim=0, keepdim=True)
+    # 优先使用 soundfile 或 librosa 加载，避免 torchcodec 依赖问题
+    try:
+        import soundfile as sf
+        speech, sample_rate = sf.read(wav)
+        # 转换为 torch tensor
+        speech = torch.from_numpy(speech).float()
+        # 如果是立体声，转换为单声道
+        if len(speech.shape) > 1:
+            speech = speech.mean(dim=1)
+        speech = speech.unsqueeze(0)  # 添加通道维度 [1, samples]
+    except ImportError:
+        try:
+            # 尝试使用 librosa
+            import librosa
+            speech, sample_rate = librosa.load(wav, sr=None)
+            speech = torch.from_numpy(speech).float()
+            speech = speech.unsqueeze(0)  # 添加通道维度 [1, samples]
+        except ImportError:
+            # 回退到 torchaudio，但尝试捕获异常
+            try:
+                speech, sample_rate = torchaudio.load(wav, backend='soundfile')
+                speech = speech.mean(dim=0, keepdim=True)
+            except Exception:
+                # 最后尝试不使用 backend 参数
+                speech, sample_rate = torchaudio.load(wav)
+                speech = speech.mean(dim=0, keepdim=True)
+    
     if sample_rate != target_sr:
         assert sample_rate >= min_sr, 'wav sample rate {} must be greater than {}'.format(sample_rate, target_sr)
         speech = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=target_sr)(speech)
