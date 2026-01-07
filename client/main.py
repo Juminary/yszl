@@ -238,15 +238,21 @@ class VoiceAssistantClient:
         列出所有已注册的说话人（需要服务器端支持 /speaker/list 接口）
         
         Returns:
-            说话人字典，格式：{speaker_id: sample_count}
+            说话人列表，格式：[{"speaker_id": ..., "num_samples": ..., ...}, ...]
         """
         try:
             response = requests.get(f"{self.server_url}/speaker/list", timeout=5)
             if response.status_code == 200:
-                speakers = response.json()
-                print(f"\n已注册的说话人:")
-                for speaker_id, count in speakers.items():
-                    print(f"  - {speaker_id}: {count} 个样本")
+                data = response.json()
+                speakers = data.get('speakers', [])
+                if speakers:
+                    print(f"\n已注册的说话人:")
+                    for speaker in speakers:
+                        speaker_id = speaker.get('speaker_id', 'unknown')
+                        num_samples = speaker.get('num_samples', 0)
+                        print(f"  - {speaker_id}: {num_samples} 个样本")
+                else:
+                    print("\n暂无已注册的说话人")
                 return speakers
             else:
                 print(f"查询失败: {response.status_code}")
@@ -257,6 +263,98 @@ class VoiceAssistantClient:
             logger.error(f"Failed to list speakers: {e}")
             print(f"查询失败: {e}")
             return None
+    
+    def delete_voice(self):
+        """
+        交互式删除已注册的说话人样本
+        用户输入 'del' 后，显示可删除列表，通过数字选择要删除的样本
+        """
+        try:
+            print("\n正在获取已注册的说话人列表...")
+            speakers = self.list_speakers()
+            
+            if not speakers or len(speakers) == 0:
+                print("没有可删除的说话人样本")
+                return
+            
+            # 显示可删除列表，带编号
+            print("\n" + "=" * 50)
+            print("可删除的说话人样本:")
+            print("-" * 50)
+            for idx, speaker in enumerate(speakers, start=1):
+                speaker_id = speaker.get('speaker_id', 'unknown')
+                num_samples = speaker.get('num_samples', 0)
+                print(f"  [{idx}] {speaker_id} ({num_samples} 个样本)")
+            print("-" * 50)
+            print("  [0] 取消")
+            print("=" * 50)
+            
+            # 获取用户选择
+            while True:
+                try:
+                    choice = input("\n请选择要删除的样本（输入数字）: ").strip()
+                    
+                    if choice == '0':
+                        print("已取消删除操作")
+                        return
+                    
+                    choice_num = int(choice)
+                    if 1 <= choice_num <= len(speakers):
+                        selected_speaker = speakers[choice_num - 1]
+                        speaker_id = selected_speaker.get('speaker_id', 'unknown')
+                        num_samples = selected_speaker.get('num_samples', 0)
+                        
+                        # 确认删除
+                        print(f"\n您选择删除: {speaker_id} ({num_samples} 个样本)")
+                        confirm = input("确认删除？(y/n，默认n): ").strip().lower()
+                        
+                        if confirm == 'y' or confirm == 'yes':
+                            # 调用删除接口
+                            print(f"\n正在删除 {speaker_id}...")
+                            response = requests.post(
+                                f"{self.server_url}/speaker/delete",
+                                json={'speaker_id': speaker_id},
+                                timeout=10
+                            )
+                            
+                            if response.status_code == 200:
+                                result = response.json()
+                                if result.get('status') == 'success':
+                                    deleted_files = result.get('deleted_files', [])
+                                    voice_clone_unregistered = result.get('voice_clone_unregistered', False)
+                                    
+                                    print(f"✅ 成功删除说话人: {speaker_id}")
+                                    if deleted_files:
+                                        print(f"   已删除文件: {', '.join(deleted_files)}")
+                                    if voice_clone_unregistered:
+                                        print(f"   已注销音色克隆")
+                                    print(f"\n说话人 {speaker_id} 及其所有相关数据已完全删除")
+                                else:
+                                    error_msg = result.get('error', '未知错误')
+                                    print(f"❌ 删除失败: {error_msg}")
+                            elif response.status_code == 404:
+                                print(f"❌ 说话人 {speaker_id} 不存在")
+                            else:
+                                error_data = response.json() if response.content else {}
+                                error_msg = error_data.get('error', f'HTTP {response.status_code}')
+                                print(f"❌ 删除失败: {error_msg}")
+                        else:
+                            print("已取消删除")
+                        
+                        return
+                    else:
+                        print(f"无效选择，请输入 0-{len(speakers)} 之间的数字")
+                except ValueError:
+                    print("请输入有效的数字")
+                except KeyboardInterrupt:
+                    print("\n\n操作已取消")
+                    return
+                    
+        except Exception as e:
+            logger.error(f"Failed to delete voice: {e}")
+            print(f"删除操作失败: {e}")
+            import traceback
+            traceback.print_exc()
     
     def register_speaker(self, speaker_id: str):
         """
@@ -430,7 +528,7 @@ class VoiceAssistantClient:
                 asr_text = unquote(response.headers.get('X-ASR-Text', ''))
                 response_text = unquote(response.headers.get('X-Response-Text', ''))
                 emotion = response.headers.get('X-Emotion', '')
-                speaker = response.headers.get('X-Speaker', '')
+                speaker = unquote(response.headers.get('X-Speaker', ''))  # 修复：对说话人ID也进行URL解码
                 
                 print(f"\n识别文本: {asr_text}")
                 print(f"情感: {emotion}")
@@ -619,7 +717,7 @@ class VoiceAssistantClient:
                         asr_text = unquote(response.headers.get('X-ASR-Text', ''))
                         response_text = unquote(response.headers.get('X-Response-Text', ''))
                         emotion = response.headers.get('X-Emotion', '')
-                        speaker = response.headers.get('X-Speaker', '')
+                        speaker = unquote(response.headers.get('X-Speaker', ''))  # 修复：对说话人ID也进行URL解码
                         
                         print(f"\n👤 你: {asr_text}")
                         print(f"😊 情感: {emotion} | 🎯 说话人: {speaker}")
@@ -926,7 +1024,7 @@ class VoiceAssistantClient:
                     asr_text = unquote(response.headers.get('X-ASR-Text', ''))
                     response_text = unquote(response.headers.get('X-Response-Text', ''))
                     emotion = response.headers.get('X-Emotion', '')
-                    speaker = response.headers.get('X-Speaker', '')
+                    speaker = unquote(response.headers.get('X-Speaker', ''))  # 修复：对说话人ID也进行URL解码
                     rag_used = response.headers.get('X-RAG-Used', 'False') == 'True'
                     
                     print(f"\n③ ASR识别结果: {asr_text}")
@@ -1027,6 +1125,7 @@ class VoiceAssistantClient:
         print("  tchat    - TTS+ASR测试（文字转语音后发服务器）")
         print("  register - 注册声纹（同时注册音色克隆）")
         print("  speakers - 查看已注册的说话人（需要服务器支持）")
+        print("  del      - 删除已注册的说话人样本")
         print("  quit     - 退出")
         print()
         
@@ -1059,6 +1158,9 @@ class VoiceAssistantClient:
                 
                 elif command == 'speakers' or command == 's':
                     self.list_speakers()
+                
+                elif command == 'del' or command == 'delete' or command == 'd':
+                    self.delete_voice()
                     
                 else:
                     print("未知命令，请重试")

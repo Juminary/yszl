@@ -687,6 +687,55 @@ def speaker_list():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/speaker/delete', methods=['POST'])
+def speaker_delete():
+    """删除说话人接口（同时删除音色克隆）"""
+    try:
+        # 支持 JSON 和 form-data 两种方式
+        if request.is_json:
+            data = request.json
+            speaker_id = data.get('speaker_id')
+        else:
+            speaker_id = request.form.get('speaker_id')
+        
+        if not speaker_id:
+            return jsonify({"error": "speaker_id is required"}), 400
+        
+        # 检查说话人是否存在
+        if modules.get('speaker') is None:
+            return jsonify({"error": "Speaker module not available"}), 500
+        
+        speakers = modules['speaker'].list_speakers()
+        speaker_ids = [s.get('speaker_id') for s in speakers]
+        if speaker_id not in speaker_ids:
+            return jsonify({"error": f"Speaker {speaker_id} not found"}), 404
+        
+        # 删除说话人（同时删除音色克隆文件）
+        result = modules['speaker'].delete_speaker(speaker_id, delete_voice_clone=True)
+        
+        if result.get('status') == 'error':
+            return jsonify(result), 400
+        
+        # 从TTS模块中注销音色克隆
+        if modules.get('tts'):
+            try:
+                modules['tts'].unregister_voice_clone(speaker_id)
+                result['voice_clone_unregistered'] = True
+                logger.info(f"Unregistered voice clone for speaker: {speaker_id}")
+            except Exception as e:
+                result['voice_clone_unregistered'] = False
+                result['voice_clone_error'] = str(e)
+                logger.warning(f"Failed to unregister voice clone for speaker {speaker_id}: {e}")
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Speaker delete error: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/dialogue', methods=['POST'])
 def dialogue_endpoint():
     """对话接口 - 支持语音命令切换模式"""
@@ -969,19 +1018,32 @@ def chat_endpoint():
         
         requested_voice_clone = request.form.get('voice_clone_id')
         voice_clone_id = requested_voice_clone.strip() if requested_voice_clone else None
+        
+        # 修复逻辑：明确区分"使用默认音色"和"使用之前保存的音色"
+        # 如果用户明确指定 '0' 或空字符串，表示要使用默认音色，应该清除保存的音色
         if voice_clone_id in ("0", ""):
             voice_clone_id = None
-        
-        if voice_clone_id and voice_clone_id in available_voice_clones:
+            voice_state['current'] = None  # 清除之前保存的音色，确保使用默认音色
+            logger.info("User explicitly requested default voice, clearing saved voice preference")
+        elif voice_clone_id and voice_clone_id in available_voice_clones:
+            # 用户指定了有效的音色克隆ID，保存并使用
             voice_state['current'] = voice_clone_id
+            logger.info(f"Using requested voice clone: {voice_clone_id}")
         elif voice_clone_id and voice_clone_id not in available_voice_clones:
-            logger.warning(f"Voice clone ID '{voice_clone_id}' not found, using session preference")
-            voice_clone_id = voice_state.get('current')
+            # 用户指定的音色克隆ID无效，回退到默认音色（不使用之前保存的音色）
+            logger.warning(f"Voice clone ID '{voice_clone_id}' not found, using default voice")
+            voice_clone_id = None
+            voice_state['current'] = None
         else:
+            # 用户没有指定音色，使用之前保存的音色（如果有）
             voice_clone_id = voice_state.get('current')
+            if voice_clone_id:
+                logger.info(f"Using saved voice preference: {voice_clone_id}")
+            else:
+                logger.info("Using default voice (no voice preference set)")
         
         if voice_clone_id:
-            logger.info(f"Using voice clone: {voice_clone_id}")
+            logger.info(f"Final voice clone selection: {voice_clone_id}")
         
         # 保存临时文件
         temp_path = Path(tempfile.mktemp(suffix='.wav'))

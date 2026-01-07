@@ -228,7 +228,8 @@ class TTSModule:
     
     def _preprocess_text(self, text: str) -> str:
         """
-        预处理文本，确保格式正确，适合TTS合成
+        增强型文本预处理，确保格式正确，适合TTS合成
+        重点处理数字转中文、英文字母空格化、特殊符号过滤
         
         Args:
             text: 原始文本
@@ -241,29 +242,94 @@ class TTSModule:
         
         import re
         
+        # 内部函数：数字转中文
+        def num_to_chinese(num_str: str) -> str:
+            """将数字字符串转换为中文汉字"""
+            num_map = {
+                '0': '零', '1': '一', '2': '二', '3': '三', '4': '四',
+                '5': '五', '6': '六', '7': '七', '8': '八', '9': '九'
+            }
+            result = ''
+            for char in num_str:
+                if char in num_map:
+                    result += num_map[char]
+                else:
+                    result += char
+            return result
+        
         # 去除多余的空白字符
         text = re.sub(r'\s+', ' ', text.strip())
         
-        # 确保文本以句号结尾（CosyVoice需要）
-        if text and text[-1] not in ['。', '.', '！', '!', '？', '?']:
+        # 第一步：处理数字和字母组合（如 "B402", "H7N7", "2人"）
+        # 匹配模式：字母+数字组合 或 数字+中文单位
+        def replace_num_pattern(match):
+            matched = match.group(0)
+            # 如果包含字母，保留字母但确保前后有空格
+            if re.search(r'[a-zA-Z]', matched):
+                # 分离字母和数字
+                letters = ''.join(re.findall(r'[a-zA-Z]', matched))
+                numbers = ''.join(re.findall(r'\d', matched))
+                chinese_nums = num_to_chinese(numbers)
+                # 确保字母和中文之间有空格
+                return f"{letters} {chinese_nums}"
+            else:
+                # 纯数字，转换为中文
+                return num_to_chinese(matched)
+        
+        # 匹配数字和字母数字组合（如 B402, H7N7, 2人, 3人）
+        text = re.sub(r'[A-Za-z]+\d+|\d+[A-Za-z]+|\d+[人个位]', replace_num_pattern, text)
+        # 匹配单独的数字（如 "2", "3", "7"）
+        text = re.sub(r'\d+', lambda m: num_to_chinese(m.group(0)), text)
+        
+        # 第二步：处理英文字母，确保前后有空格（防止和中文粘连）
+        # 在英文字母和中文之间添加空格
+        text = re.sub(r'([a-zA-Z]+)([\u4e00-\u9fa5])', r'\1 \2', text)
+        text = re.sub(r'([\u4e00-\u9fa5])([a-zA-Z]+)', r'\1 \2', text)
+        
+        # 第三步：规范化标点符号
+        text = text.replace(',', '，').replace('.', '。')
+        text = text.replace('!', '！').replace('?', '？')
+        
+        # 处理病症列表的停顿：将连续病名之间的逗号替换为句号，增加合成稳定性
+        # 匹配模式：中文词 + 逗号 + 中文词（病名列表）
+        # 例如："咽喉炎，急性咽炎" -> "咽喉炎。急性咽炎"
+        text = re.sub(r'([\u4e00-\u9fa5]+)，([\u4e00-\u9fa5]+)', r'\1。\2', text)
+        # 如果还有连续的逗号分隔的病名，继续处理（最多处理3次，避免过度替换）
+        for _ in range(3):
+            new_text = re.sub(r'([\u4e00-\u9fa5]+)，([\u4e00-\u9fa5]+)', r'\1。\2', text)
+            if new_text == text:
+                break
+            text = new_text
+        
+        # 第四步：过滤特殊符号，只保留中文、英文、数字、基本标点 [。，！？]
+        # 保留：中文、英文字母、数字、句号、逗号、感叹号、问号、空格
+        text = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9，。！？\s]', '', text)
+        
+        # 第五步：清理多余空格
+        text = re.sub(r'\s+', ' ', text)
+        # 确保标点符号前后没有多余空格
+        text = re.sub(r'\s+([，。！？])', r'\1', text)
+        text = re.sub(r'([，。！？])\s+', r'\1', text)
+        
+        # 第六步：确保文本以句号结尾（CosyVoice需要）
+        text = text.strip()
+        if text and text[-1] not in ['。', '！', '？']:
             text += '。'
         
-        # 规范化标点符号
-        text = text.replace('，', '，').replace(',', '，')
-        text = text.replace('。', '。').replace('.', '。')
-        
-        # 去除特殊字符（保留中文、英文、数字、基本标点）
-        text = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9，。！？、：；（）\s]', '', text)
-        
-        # 确保标点符号前后没有多余空格
-        text = re.sub(r'\s+([，。！？、：；）])', r'\1', text)
-        text = re.sub(r'([（])\s+', r'\1', text)
+        # 修复 Input size 0 错误：检查预处理后的文本是否全是非文字符号
+        # 如果文本中没有任何中文字符、英文字母或数字，返回空字符串或固定文本
+        import re
+        has_text_content = bool(re.search(r'[\u4e00-\u9fa5a-zA-Z0-9]', text))
+        if not has_text_content:
+            logger.warning(f"Preprocessed text contains no text content (only punctuation/spaces), returning empty string to prevent Input size 0 error")
+            return ""
         
         return text.strip()
     
     def _split_long_text(self, text: str, max_length: int = 200) -> list:
         """
         将长文本分段，确保每段不超过最大长度
+        优先使用句号切分，如果没有句号才找逗号
         
         Args:
             text: 要分段的文本
@@ -275,8 +341,9 @@ class TTSModule:
         if len(text) <= max_length:
             return [text]
         
-        # 按句号、问号、感叹号分段
         import re
+        
+        # 第一步：优先按句号、问号、感叹号分段
         sentences = re.split(r'([。！？])', text)
         
         segments = []
@@ -290,9 +357,9 @@ class TTSModule:
             else:
                 if current_segment:
                     segments.append(current_segment)
-                # 如果单个句子就超过max_length，强制分段
+                # 如果单个句子就超过max_length，才按逗号进一步分段
                 if len(sentence) > max_length:
-                    # 按逗号进一步分段
+                    # 按逗号进一步分段（只有在没有句号的情况下才使用）
                     sub_sentences = re.split(r'([，,])', sentence)
                     temp = ""
                     for j in range(0, len(sub_sentences), 2):
@@ -365,12 +432,15 @@ class TTSModule:
                 output_path = str(temp_dir / f"tts_{abs(hash(text))}.wav")
             
             # 检查是否使用音色克隆
-            if voice_clone_id and voice_clone_id in self.voice_clones:
+            # 重要：只有当 voice_clone_id 明确存在、非空且在 voice_clones 中时，才使用音色克隆
+            # 如果 voice_clone_id 为 None、空字符串或不在 voice_clones 中，使用默认音色
+            if voice_clone_id and voice_clone_id.strip() and voice_clone_id in self.voice_clones:
+                logger.info(f"Using voice clone: {voice_clone_id} (explicitly requested)")
                 # 使用音色克隆
                 prompt_wav = self.voice_clones[voice_clone_id]
                 
                 # 从speaker_db获取prompt_text（如果存在）
-                prompt_text = "你好，我是医生，很高兴为您服务。"  # 默认提示文本
+                prompt_text = "你好，我是医生"  # 默认提示文本（15字符以内）
                 try:
                     speaker_db_path = Path(__file__).parent.parent.parent / "data" / "speaker_db.pkl"
                     if speaker_db_path.exists():
@@ -388,67 +458,277 @@ class TTSModule:
                 except Exception as e:
                     logger.warning(f"Failed to load prompt_text from speaker_db: {e}")
                 
-                # 预处理prompt_text
-                prompt_text = self._preprocess_text(prompt_text)
+                # 强制裁剪 prompt_text 为前15个字符
+                # 经验表明：过长的提示文字是导致 sampling reaches max_trials 的元凶
+                def clean_prompt_text(prompt: str) -> str:
+                    """轻量级清理 prompt_text，强制截断为前15个字符"""
+                    if not prompt:
+                        return "你好，我是医生"
+                    import re
+                    # 只去除多余的空白字符，保留所有原始内容
+                    prompt = re.sub(r'\s+', ' ', prompt.strip())
+                    # 强制截断为前15个字符
+                    if len(prompt) > 15:
+                        prompt = prompt[:15]
+                        logger.info(f"Prompt text truncated to 15 chars: {prompt}")
+                    return prompt
                 
-                logger.info(f"Using voice clone: {voice_clone_id}, prompt_text: {prompt_text[:30]}... ({len(prompt_text)} chars), text length: {len(text)} chars")
+                prompt_text_processed = clean_prompt_text(prompt_text)
+                if not prompt_text_processed:
+                    prompt_text_processed = "你好，我是医生"
+                
+                logger.info(f"Using voice clone: {voice_clone_id}, prompt_text: {prompt_text_processed[:50]}... (length: {len(prompt_text_processed)}), text length: {len(text)} chars")
                 
                 audio_outputs = []
-                # 将文本切成更短的片段，降低中途截断概率
-                text_segments = self._split_long_text(text, max_length=80)
-                logger.info(f"Text split into {len(text_segments)} segments for zero-shot voice clone (max_len=80)")
-
-                # 逐段零样本合成，失败的段在重试后才回退到默认音色
-                for segment in text_segments:
-                    segment_audio = []
-                    clone_success = False
-                    # 重试 zero-shot，尽量保留克隆音色
-                    for retry in range(max_retries + 1):
+                # 动态分段策略优化：将分段阈值统一调整为固定的50字符
+                # 这个长度对 CosyVoice 最稳定，允许拆分成10-20字的小段，降低LLM采样压力
+                text_segments = self._split_long_text(text, max_length=50)
+                logger.info(f"Text split into {len(text_segments)} segments for zero-shot voice clone (max_len=50)")
+                
+                # 记录每个段的处理状态
+                segment_status = []
+                
+                # 辅助函数：尝试用克隆音色合成一段文本
+                def try_zero_shot_synthesis(text_to_synth, seg_name="segment", max_attempts=3, add_punctuation_on_error=True, is_first_segment=False):
+                    """尝试用零样本克隆合成文本，返回(成功标志, 音频列表, 错误信息)"""
+                    # 移除最小字符限制，允许拆分成10-20字的小段，降低LLM采样压力
+                    if not text_to_synth or not text_to_synth.strip():
+                        return False, [], f"Text is empty"
+                    
+                    text_processed = self._preprocess_text(text_to_synth)
+                    # 预处理后检查：如果为空或全是非文字符号，返回错误
+                    if not text_processed or not text_processed.strip():
+                        logger.warning(f"{seg_name}: Text became empty after preprocessing (original: {text_to_synth[:30]}...)")
+                        return False, [], f"Text became empty after preprocessing"
+                    
+                    # 废除占位符逻辑：移除所有在文本开头添加"。，"或空格的逻辑
+                    # 保持文本干净，只需确保以句号结尾（已在_preprocess_text中处理）
+                    
+                    zero_shot_speed = min(speed, 0.95) if speed > 0.95 else speed
+                    
+                    for attempt in range(max_attempts):
                         try:
+                            attempt_audio = []
+                            current_text = text_processed
+                            current_speed = zero_shot_speed
+                            
+                            # 采样参数微调：如果发生 RuntimeError，第二次重试时降低 speed 0.05，并在文本末尾增加句号
+                            if attempt > 0 and add_punctuation_on_error:
+                                # 降低 speed 0.05
+                                current_speed = max(0.5, current_speed - 0.05)
+                                # 确保文本末尾有句号
+                                if current_text[-1] not in ['。', '！', '？']:
+                                    current_text = current_text + '。'
+                                logger.info(f"{seg_name} attempt {attempt+1}: Reduced speed to {current_speed:.2f} and ensured period ending")
+                            
                             for output in self.model.inference_zero_shot(
-                                tts_text=segment,
-                                prompt_text=prompt_text,
+                                tts_text=current_text,
+                                prompt_text=prompt_text_processed,
                                 prompt_wav=prompt_wav,
                                 zero_shot_spk_id=voice_clone_id,
                                 stream=False,
-                                speed=speed,
+                                speed=current_speed,
                                 text_frontend=False,
                                 play_prompt=self.play_prompt
                             ):
                                 if output.get("tts_speech") is not None:
-                                    segment_audio.append(output["tts_speech"])
-                            if segment_audio:
-                                clone_success = True
-                                break
-                            raise ValueError("Zero-shot segment produced no audio")
-                        except Exception as seg_err:
-                            logger.warning(
-                                f"Zero-shot segment failed (attempt {retry+1}/{max_retries+1}): {seg_err}, segment: {segment[:50]}..."
+                                    audio_tensor = output["tts_speech"]
+                                    if isinstance(audio_tensor, torch.Tensor):
+                                        # 检测 NaN 或全零音频
+                                        if audio_tensor.numel() > 0:
+                                            has_nan = torch.isnan(audio_tensor).any()
+                                            is_all_zero = (audio_tensor.abs() < 1e-6).all()
+                                            
+                                            if has_nan:
+                                                logger.warning(f"{seg_name} attempt {attempt+1}: Audio contains NaN, will retry")
+                                                attempt_audio = []  # 清空，触发重试
+                                                break
+                                            elif is_all_zero:
+                                                logger.warning(f"{seg_name} attempt {attempt+1}: Audio is all zeros, will retry")
+                                                attempt_audio = []  # 清空，触发重试
+                                                break
+                                            else:
+                                                audio_length = audio_tensor.shape[-1] / self.sample_rate
+                                                if 0.1 <= audio_length <= 30.0:
+                                                    attempt_audio.append(audio_tensor)
+                                                else:
+                                                    logger.warning(f"{seg_name} attempt {attempt+1}: Audio length abnormal ({audio_length:.2f}s)")
+                                        else:
+                                            logger.warning(f"{seg_name} attempt {attempt+1}: Audio tensor is empty")
+                            
+                            if attempt_audio:
+                                total_length = sum(a.shape[-1] for a in attempt_audio) / self.sample_rate
+                                
+                                # 基础长度检查：确保音频长度合理
+                                expected_min_length = len(text_processed) * 0.05
+                                if total_length >= expected_min_length:
+                                    return True, attempt_audio, None
+                                else:
+                                    logger.warning(f"{seg_name} attempt {attempt+1}: audio too short ({total_length:.2f}s < {expected_min_length:.2f}s), retrying...")
+                                    attempt_audio = []  # 清空，触发重试
+                            else:
+                                raise ValueError("No valid audio produced")
+                        except RuntimeError as e:
+                            error_str = str(e)
+                            # 检查是否是 max_trials 错误
+                            if "max_trials" in error_str or "sampling reaches" in error_str:
+                                if attempt < max_attempts - 1:
+                                    logger.warning(f"{seg_name} attempt {attempt+1}: RuntimeError (max_trials), will retry with punctuation and space modification")
+                                    # 下次尝试时会添加标点符号和空格
+                                else:
+                                    logger.error(f"{seg_name}: All attempts failed with RuntimeError (max_trials): {error_str}")
+                                    logger.error(f"  Current prompt_text: {prompt_text_processed}")
+                                    logger.error(f"  Failed text: {current_text}")
+                                    return False, [], f"RuntimeError (max_trials): {error_str}"
+                            else:
+                                if attempt < max_attempts - 1:
+                                    logger.warning(f"{seg_name} attempt {attempt+1} failed: {e}, retrying...")
+                                else:
+                                    logger.error(f"  Current prompt_text: {prompt_text_processed}")
+                                    logger.error(f"  Failed text: {current_text}")
+                                    return False, [], str(e)
+                        except Exception as e:
+                            if attempt < max_attempts - 1:
+                                logger.debug(f"{seg_name} attempt {attempt+1} failed: {e}, retrying...")
+                            else:
+                                logger.error(f"  Current prompt_text: {prompt_text_processed}")
+                                logger.error(f"  Failed text: {current_text}")
+                                return False, [], str(e)
+                    return False, [], "All attempts failed"
+
+                # 逐段零样本合成，失败时拆分更小的段继续用克隆音色
+                for seg_idx, segment in enumerate(text_segments, 1):
+                    segment_audio = []
+                    clone_success = False
+                    segment_error = None
+                    
+                    # 第一级：尝试直接合成整个segment
+                    # 标记首段，用于增强首段权重保护
+                    is_first_segment = (seg_idx == 1)
+                    clone_success, segment_audio, segment_error = try_zero_shot_synthesis(
+                        segment, f"Segment {seg_idx}", max_attempts=max_retries + 1, is_first_segment=is_first_segment
+                    )
+                    
+                    # 第二级：如果失败，拆分成更小的子段（30字符）继续用克隆音色
+                    # 移除最小字符限制，允许拆分成10-20字的小段
+                    if not clone_success and len(segment) > 30:
+                        logger.info(f"Segment {seg_idx} failed, splitting into sub-segments (30 chars) and retrying with clone voice...")
+                        sub_segments = self._split_long_text(segment, max_length=30)
+                        sub_audio_list = []
+                        sub_success_count = 0
+                        
+                        for sub_idx, sub_seg in enumerate(sub_segments, 1):
+                            # 移除最小字符限制，只要不是空字符串就尝试合成
+                            if not sub_seg or not sub_seg.strip():
+                                logger.warning(f"Segment {seg_idx}-Sub {sub_idx} is empty, skipping...")
+                                continue
+                            
+                            sub_success, sub_audio, sub_err = try_zero_shot_synthesis(
+                                sub_seg, f"Segment {seg_idx}-Sub {sub_idx}", max_attempts=2
                             )
-                            segment_audio = []
+                            if sub_success:
+                                sub_audio_list.extend(sub_audio)
+                                sub_success_count += 1
+                            else:
+                                logger.warning(f"Segment {seg_idx}-Sub {sub_idx} failed: {sub_err}")
+                                # 不再进行第三级拆分，因为严禁 30 字符以下的微段拆分
+                                logger.error(f"Segment {seg_idx}-Sub {sub_idx}: Cannot split further (minimum 30 chars required)")
+                        
+                        if sub_audio_list:
+                            segment_audio = sub_audio_list
+                            clone_success = True
+                            logger.info(f"Segment {seg_idx}: succeeded with sub-segments ({sub_success_count}/{len(sub_segments)} sub-segments succeeded)")
+                        else:
+                            logger.error(f"Segment {seg_idx}: ALL sub-segments failed with clone voice")
+                    elif not clone_success:
+                        # 对于短segment（<30字符），不再拆分，直接标记为失败
+                        if not segment or not segment.strip():
+                            logger.warning(f"Segment {seg_idx} is empty, skipping...")
+                            segment_error = f"Segment is empty"
+                        else:
+                            logger.info(f"Segment {seg_idx} failed, trying more attempts (not splitting segments < 60 chars)...")
+                            clone_success, segment_audio, segment_error = try_zero_shot_synthesis(
+                                segment, f"Segment {seg_idx} (retry)", max_attempts=5
+                            )
 
-                    # 如果克隆重试后仍失败，回退到默认音色合成该分段
-                    if not clone_success:
-                        fallback_speaker = speaker or (self.available_spks[0] if self.available_spks else None)
-                        if fallback_speaker:
-                            logger.info(f"Falling back to default voice for segment: {segment[:30]}...")
-                            for output in self.model.inference_sft(
-                                tts_text=segment,
-                                spk_id=fallback_speaker,
-                                stream=False,
-                                speed=speed
-                            ):
-                                if output.get("tts_speech") is not None:
-                                    segment_audio.append(output["tts_speech"])
+                    # 记录段状态
+                    if clone_success:
+                        segment_status.append(f"段{seg_idx}: 零样本克隆成功")
+                    else:
+                        segment_status.append(f"段{seg_idx}: 失败 - {segment_error or '未知错误'}")
+                        # 记录清晰的错误日志，包含该段的原文和 prompt_text
+                        logger.error(f"Segment {seg_idx}/{len(text_segments)}: ALL clone attempts failed!")
+                        logger.error(f"  Original segment text: {segment}")
+                        logger.error(f"  Current prompt_text: {prompt_text_processed}")
+                        logger.error(f"  Error: {segment_error or '未知错误'}")
+                        # 注意：这里不再回退到默认音色，保持克隆音色的完整性
 
+                    # 如果段合成成功，添加到输出
                     if segment_audio:
+                        # 优化音频拼接：使用0.1秒的淡入淡出（Crossfade）替代硬性静音
+                        # 减少段落间的机械感，使语音更自然
+                        if audio_outputs and seg_idx > 1:
+                            crossfade_duration = 0.1  # 0.1秒淡入淡出
+                            crossfade_samples = int(crossfade_duration * self.sample_rate)
+                            
+                            # 获取前一段的最后部分和当前段的第一部分
+                            last_audio = audio_outputs[-1]
+                            first_audio = segment_audio[0]
+                            
+                            # 确保是2D tensor (1, samples)
+                            if last_audio.dim() == 1:
+                                last_audio = last_audio.unsqueeze(0)
+                            if first_audio.dim() == 1:
+                                first_audio = first_audio.unsqueeze(0)
+                            
+                            # 计算交叉淡入淡出的样本数（取两者中较小的）
+                            last_samples = last_audio.shape[-1]
+                            first_samples = first_audio.shape[-1]
+                            actual_crossfade = min(crossfade_samples, last_samples, first_samples)
+                            
+                            if actual_crossfade > 0:
+                                # 创建淡出和淡入的权重
+                                fade_out = torch.linspace(1.0, 0.0, actual_crossfade, device=last_audio.device, dtype=last_audio.dtype)
+                                fade_in = torch.linspace(0.0, 1.0, actual_crossfade, device=first_audio.device, dtype=first_audio.dtype)
+                                
+                                # 对前一段的末尾进行淡出
+                                if last_samples >= actual_crossfade:
+                                    last_audio[:, -actual_crossfade:] = last_audio[:, -actual_crossfade:] * fade_out.unsqueeze(0)
+                                
+                                # 对当前段的开头进行淡入
+                                if first_samples >= actual_crossfade:
+                                    first_audio[:, :actual_crossfade] = first_audio[:, :actual_crossfade] * fade_in.unsqueeze(0)
+                                
+                                # 更新音频
+                                audio_outputs[-1] = last_audio
+                                segment_audio[0] = first_audio
+                            
+                            logger.debug(f"Applied {actual_crossfade/self.sample_rate:.3f}s crossfade between segments {seg_idx-1} and {seg_idx}")
+                        
                         audio_outputs.extend(segment_audio)
-
-                # 如果最终仍无音频（极端情况），再用默认音色合成全文兜底
+                
+                # 记录所有段的处理状态
+                logger.info(f"Segment processing summary: {', '.join(segment_status)}")
+                
+                # 检查是否有段失败
+                failed_segments = [i+1 for i, status in enumerate(segment_status) if '失败' in status]
+                if failed_segments:
+                    logger.warning(f"Warning: {len(failed_segments)} segments failed with clone voice: {failed_segments}")
+                    # 如果失败的段数少于总段数，至少部分音频已生成（全部使用克隆音色）
+                    if len(failed_segments) < len(text_segments):
+                        logger.warning(f"Partial audio generated with clone voice: {len(text_segments) - len(failed_segments)}/{len(text_segments)} segments succeeded")
+                        logger.warning(f"Note: Failed segments will be skipped to maintain voice consistency (no default voice fallback)")
+                    else:
+                        logger.error("All segments failed with clone voice! This is an extreme case.")
+                
+                # 如果最终仍无音频（极端情况：所有segment和所有子段都失败），才用默认音色合成全文兜底
+                # 但这种情况应该很少发生，因为我们已经做了多级分段重试
                 if not audio_outputs:
+                    logger.error("CRITICAL: All clone voice attempts failed, including all sub-segments and micro-segments!")
+                    logger.error("This indicates a serious issue with the voice clone or the text. Using default voice as last resort.")
                     fallback_speaker = speaker or (self.available_spks[0] if self.available_spks else None)
                     if fallback_speaker:
-                        logger.warning("Zero-shot and per-segment fallback produced no audio; using default voice for full text.")
+                        logger.warning("Using default voice for full text as emergency fallback (this should rarely happen).")
                         for output in self.model.inference_sft(
                             tts_text=text,
                             spk_id=fallback_speaker,
@@ -478,17 +758,33 @@ class TTSModule:
                 text_segments = self._split_long_text(text, max_length=80)
                 if len(text_segments) > 1:
                     logger.info(f"Text split into {len(text_segments)} segments for standard synthesis (max_len=80)")
-                for segment in text_segments:
+                
+                segment_status = []
+                for seg_idx, segment in enumerate(text_segments, 1):
+                    segment_audio = []
+                    segment_success = False
+                    segment_error = None
+                    
                     try:
                         # instruct 提示强约束语气；若失败则回退到普通合成
                         if instruct:
-                            iterator = self.model.inference_instruct(
-                                tts_text=segment,
-                                spk_id=speaker,
-                                instruct_text=instruct,
-                                stream=False,
-                                speed=speed
-                            )
+                            try:
+                                iterator = self.model.inference_instruct(
+                                    tts_text=segment,
+                                    spk_id=speaker,
+                                    instruct_text=instruct,
+                                    stream=False,
+                                    speed=speed
+                                )
+                                for output in iterator:
+                                    if output.get("tts_speech") is not None:
+                                        segment_audio.append(output["tts_speech"])
+                                if segment_audio:
+                                    segment_success = True
+                                    logger.info(f"Segment {seg_idx}/{len(text_segments)}: instruct synthesis success")
+                            except Exception as e:
+                                logger.warning(f"Segment {seg_idx}/{len(text_segments)}: instruct synthesis failed, falling back to sft: {e}")
+                                segment_error = str(e)
                         else:
                             iterator = self.model.inference_sft(
                                 tts_text=segment,
@@ -496,23 +792,100 @@ class TTSModule:
                                 stream=False,
                                 speed=speed
                             )
-
-                        for output in iterator:
-                            if output.get("tts_speech") is not None:
-                                audio_outputs.append(output["tts_speech"])
+                            for output in iterator:
+                                if output.get("tts_speech") is not None:
+                                    segment_audio.append(output["tts_speech"])
+                            if segment_audio:
+                                segment_success = True
+                                logger.info(f"Segment {seg_idx}/{len(text_segments)}: sft synthesis success")
                     except Exception as e:
-                        logger.warning(f"Instruct synthesis failed, falling back to sft: {e}")
-                        for output in self.model.inference_sft(
-                            tts_text=segment,
-                            spk_id=speaker,
-                            stream=False,
-                            speed=speed
-                        ):
-                            if output.get("tts_speech") is not None:
-                                audio_outputs.append(output["tts_speech"])
+                        segment_error = str(e)
+                        logger.warning(f"Segment {seg_idx}/{len(text_segments)}: synthesis failed: {e}")
+                        # 尝试fallback到sft
+                        try:
+                            segment_audio = []
+                            for output in self.model.inference_sft(
+                                tts_text=segment,
+                                spk_id=speaker,
+                                stream=False,
+                                speed=speed
+                            ):
+                                if output.get("tts_speech") is not None:
+                                    segment_audio.append(output["tts_speech"])
+                            if segment_audio:
+                                segment_success = True
+                                logger.info(f"Segment {seg_idx}/{len(text_segments)}: fallback sft success")
+                        except Exception as fallback_err:
+                            logger.error(f"Segment {seg_idx}/{len(text_segments)}: fallback also failed: {fallback_err}")
+                    
+                    # 记录段状态
+                    if segment_success:
+                        segment_status.append(f"段{seg_idx}: 成功")
+                    else:
+                        segment_status.append(f"段{seg_idx}: 失败 - {segment_error or '未知错误'}")
+                        logger.error(f"Segment {seg_idx}/{len(text_segments)}: ALL methods failed! Segment text: {segment}")
+                    
+                    # 如果段合成成功，添加到输出
+                    if segment_audio:
+                        audio_outputs.extend(segment_audio)
+                    else:
+                        # 如果段合成失败，尝试进一步拆分
+                        if len(segment) > 20:
+                            logger.info(f"Attempting to split failed segment {seg_idx} into smaller chunks")
+                            sub_segments = self._split_long_text(segment, max_length=40)
+                            for sub_seg in sub_segments:
+                                try:
+                                    for output in self.model.inference_sft(
+                                        tts_text=sub_seg,
+                                        spk_id=speaker,
+                                        stream=False,
+                                        speed=speed
+                                    ):
+                                        if output.get("tts_speech") is not None:
+                                            audio_outputs.append(output["tts_speech"])
+                                            logger.info(f"Sub-segment of segment {seg_idx} succeeded: {sub_seg[:30]}...")
+                                            break
+                                except Exception as sub_err:
+                                    logger.error(f"Sub-segment also failed: {sub_err}")
+                
+                # 记录所有段的处理状态
+                if len(text_segments) > 1:
+                    logger.info(f"Standard synthesis segment summary: {', '.join(segment_status)}")
+                    failed_segments = [i+1 for i, status in enumerate(segment_status) if '失败' in status]
+                    if failed_segments:
+                        logger.warning(f"Warning: {len(failed_segments)} segments failed: {failed_segments}")
             if audio_outputs:
+                # 合并音频前，先验证所有音频片段的质量
+                valid_audio_outputs = []
+                for idx, audio_tensor in enumerate(audio_outputs):
+                    if isinstance(audio_tensor, torch.Tensor):
+                        if audio_tensor.numel() > 0 and not torch.isnan(audio_tensor).any() and not torch.isinf(audio_tensor).any():
+                            # 检查音频是否在合理范围内（避免异常大的值）
+                            max_val = audio_tensor.abs().max().item()
+                            if max_val < 10.0:  # 合理的音频范围
+                                valid_audio_outputs.append(audio_tensor)
+                            else:
+                                logger.warning(f"Audio segment {idx} has abnormal values (max={max_val:.2f}), normalizing...")
+                                # 归一化异常音频
+                                audio_tensor = audio_tensor / max_val * 0.95
+                                valid_audio_outputs.append(audio_tensor)
+                        else:
+                            logger.warning(f"Audio segment {idx} is invalid (NaN/Inf/empty), skipping")
+                    else:
+                        valid_audio_outputs.append(audio_tensor)
+                
+                if not valid_audio_outputs:
+                    logger.error("All audio segments are invalid")
+                    return {
+                        "audio": None,
+                        "sample_rate": 0,
+                        "output_path": None,
+                        "text": text,
+                        "error": "All audio segments are invalid"
+                    }
+                
                 # 合并音频
-                audio = torch.cat(audio_outputs, dim=1)
+                audio = torch.cat(valid_audio_outputs, dim=1)
                 
                 # 检查音频是否有效
                 if audio.shape[1] == 0:
@@ -647,7 +1020,10 @@ class TTSModule:
                     audio_path = str(audio_file)
                     try:
                         # 注册到CosyVoice
-                        prompt_text = "你好，我是医生，很高兴为您服务。"  # 默认提示文本
+                        prompt_text = "你好，我是医生"  # 默认提示文本（15字符以内）
+                        # 强制截断为前15个字符
+                        if len(prompt_text) > 15:
+                            prompt_text = prompt_text[:15]
                         success = self.model.add_zero_shot_spk(
                             prompt_text=prompt_text,
                             prompt_wav=audio_path,
@@ -680,12 +1056,13 @@ class TTSModule:
                     if audio_path and os.path.exists(audio_path):
                         try:
                             # 从 metadata 获取 prompt_text，如果没有则使用默认值
-                            prompt_text = metadata.get('prompt_text', "你好，我是医生，很高兴为您服务。")
+                            prompt_text = metadata.get('prompt_text', "你好，我是医生")
                             
-                            # 限制prompt_text长度（建议不超过50字）
-                            if len(prompt_text) > 50:
-                                logger.warning(f"Prompt text too long ({len(prompt_text)} chars) for {speaker_id}, truncating to 50 chars")
-                                prompt_text = prompt_text[:50]
+                            # 强制截断 prompt_text 为前15个字符
+                            # 经验表明：过长的提示文字是导致 sampling reaches max_trials 的元凶
+                            if len(prompt_text) > 15:
+                                logger.warning(f"Prompt text too long ({len(prompt_text)} chars) for {speaker_id}, truncating to 15 chars")
+                                prompt_text = prompt_text[:15]
                             
                             # 注册到CosyVoice
                             success = self.model.add_zero_shot_spk(
@@ -727,13 +1104,19 @@ class TTSModule:
         
         try:
             if prompt_text is None:
-                prompt_text = "你好，我是医生，很高兴为您服务。"
+                prompt_text = "你好，我是医生"
             
-            # 检查并限制prompt_text长度（建议不超过50字）
+            # 重要：不能对 prompt_text 进行破坏性预处理（如数字转中文、字母处理等）
+            # 只做轻量级清理，确保参考音频里的文字和模型看到的文字一致
+            import re
+            prompt_text = re.sub(r'\s+', ' ', prompt_text.strip())
+            
+            # 强制截断 prompt_text 为前15个字符
+            # 经验表明：过长的提示文字是导致 sampling reaches max_trials 的元凶
             original_length = len(prompt_text)
-            if len(prompt_text) > 50:
-                logger.warning(f"Prompt text too long ({original_length} chars), truncating to 50 chars for better performance")
-                prompt_text = prompt_text[:50]
+            if len(prompt_text) > 15:
+                logger.warning(f"Prompt text too long ({original_length} chars), truncating to 15 chars to prevent max_trials error")
+                prompt_text = prompt_text[:15]
             
             # 检查音频长度（建议3-10秒）
             try:
@@ -770,6 +1153,29 @@ class TTSModule:
     def list_voice_clones(self):
         """列出所有已注册的音色克隆"""
         return list(self.voice_clones.keys())
+    
+    def unregister_voice_clone(self, speaker_id: str) -> bool:
+        """
+        注销音色克隆
+        
+        Args:
+            speaker_id: 要注销的说话人ID
+        
+        Returns:
+            bool: 是否成功注销
+        """
+        if speaker_id not in self.voice_clones:
+            logger.warning(f"Voice clone {speaker_id} not found in registry")
+            return False
+        
+        try:
+            # 从字典中移除（CosyVoice模型内部可能无法直接删除，但至少我们不再使用它）
+            del self.voice_clones[speaker_id]
+            logger.info(f"Unregistered voice clone: {speaker_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to unregister voice clone {speaker_id}: {e}")
+            return False
     
     def get_model_info(self) -> Dict:
         """获取模型信息"""

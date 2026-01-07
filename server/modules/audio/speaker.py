@@ -307,11 +307,45 @@ class SpeakerModule:
                     "error": "Dimension mismatch with all registered speakers"
                 }
             
-            best_speaker = max(similarities, key=similarities.get)
-            best_similarity = similarities[best_speaker]
+            # 按相似度排序，找出最佳匹配
+            sorted_similarities = sorted(similarities.items(), key=lambda x: x[1], reverse=True)
+            best_speaker, best_similarity = sorted_similarities[0]
+            
+            # 检查是否有多个ID相似度都很高（可能是同一用户注册了多个ID）
+            # 如果前两个候选的相似度差异小于0.05，且都超过阈值，可能存在重复注册
+            if len(sorted_similarities) > 1:
+                second_similarity = sorted_similarities[1][1]
+                similarity_diff = best_similarity - second_similarity
+                
+                # 如果前两个候选相似度都很高且差异很小，选择样本数更多的
+                if similarity_diff < 0.05 and best_similarity >= self.threshold and second_similarity >= self.threshold:
+                    candidate1_id, candidate1_sim = sorted_similarities[0]
+                    candidate2_id, candidate2_sim = sorted_similarities[1]
+                    candidate1_samples = len(self.speaker_db[candidate1_id].get("embeddings", []))
+                    candidate2_samples = len(self.speaker_db[candidate2_id].get("embeddings", []))
+                    
+                    logger.warning(
+                        f"Multiple high-similarity candidates detected: "
+                        f"{candidate1_id} (sim={candidate1_sim:.4f}, samples={candidate1_samples}) vs "
+                        f"{candidate2_id} (sim={candidate2_sim:.4f}, samples={candidate2_samples}). "
+                        f"Choosing the one with more samples."
+                    )
+                    
+                    # 选择样本数更多的ID
+                    if candidate2_samples > candidate1_samples:
+                        best_speaker = candidate2_id
+                        best_similarity = candidate2_sim
+                        logger.info(f"Selected {best_speaker} due to more samples ({candidate2_samples} vs {candidate1_samples})")
+            
             recognized = best_similarity >= self.threshold
             
-            logger.info(f"Best match: {best_speaker} with similarity {best_similarity:.4f} (threshold: {self.threshold}, recognized: {recognized})")
+            # 记录所有候选ID的相似度（用于调试）
+            top_candidates = sorted_similarities[:3]  # 记录前3个候选
+            logger.info(
+                f"Best match: {best_speaker} with similarity {best_similarity:.4f} "
+                f"(threshold: {self.threshold}, recognized: {recognized}). "
+                f"Top candidates: {[(sid, f'{sim:.4f}') for sid, sim in top_candidates]}"
+            )
             
             result = {
                 "speaker_id": best_speaker if recognized else "unknown",
@@ -322,7 +356,7 @@ class SpeakerModule:
             }
             
             if return_all:
-                result["all_similarities"] = dict(sorted(similarities.items(), key=lambda x: x[1], reverse=True))
+                result["all_similarities"] = dict(sorted_similarities)
             
             return result
             
@@ -367,13 +401,60 @@ class SpeakerModule:
             return 0.0
         return dot_product / (norm1 * norm2)
     
-    def delete_speaker(self, speaker_id: str) -> Dict:
-        """删除说话人"""
-        if speaker_id in self.speaker_db:
+    def delete_speaker(self, speaker_id: str, delete_voice_clone: bool = True) -> Dict:
+        """
+        删除说话人
+        
+        Args:
+            speaker_id: 要删除的说话人ID
+            delete_voice_clone: 是否同时删除音色克隆文件（默认True）
+        
+        Returns:
+            Dict: 删除结果
+        """
+        if speaker_id not in self.speaker_db:
+            return {"status": "error", "error": f"Speaker {speaker_id} not found"}
+        
+        try:
+            # 获取音色克隆文件路径（如果存在）
+            voice_clone_path = None
+            if delete_voice_clone:
+                metadata = self.speaker_db[speaker_id].get('metadata', {})
+                voice_clone_path = metadata.get('voice_clone_path')
+                
+                # 如果没有在metadata中，尝试从默认路径查找
+                if not voice_clone_path:
+                    voice_clone_dir = Path(self.db_path).parent.parent / "data" / "voice_clones"
+                    voice_clone_path = voice_clone_dir / f"{speaker_id}.wav"
+                    if not voice_clone_path.exists():
+                        voice_clone_path = None
+            
+            # 从数据库中删除
             del self.speaker_db[speaker_id]
             self._save_database()
-            return {"status": "success", "speaker_id": speaker_id}
-        return {"status": "error", "error": f"Speaker {speaker_id} not found"}
+            
+            # 删除音色克隆文件
+            deleted_files = []
+            if delete_voice_clone and voice_clone_path:
+                try:
+                    voice_clone_path = Path(voice_clone_path)
+                    if voice_clone_path.exists():
+                        voice_clone_path.unlink()
+                        deleted_files.append(str(voice_clone_path))
+                        logger.info(f"Deleted voice clone file: {voice_clone_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete voice clone file {voice_clone_path}: {e}")
+            
+            logger.info(f"Deleted speaker {speaker_id} from database")
+            
+            return {
+                "status": "success",
+                "speaker_id": speaker_id,
+                "deleted_files": deleted_files
+            }
+        except Exception as e:
+            logger.error(f"Failed to delete speaker {speaker_id}: {e}", exc_info=True)
+            return {"status": "error", "error": str(e)}
     
     def list_speakers(self) -> List[Dict]:
         """列出所有注册的说话人"""
