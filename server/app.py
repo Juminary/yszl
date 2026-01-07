@@ -1297,39 +1297,83 @@ def chat_endpoint():
                 logger.warning(f"Failed to record consultation utterance: {e}")
         
         # ========================================
-        # 患者模式：使用导诊服务
+        # 患者模式：根据意图决定是否导诊（与 /dialogue 端点逻辑完全一致）
         # ========================================
         triage_result = None
         dialogue_result = None  # 初始化变量，确保在所有路径中都有定义
         
         if current_mode == 'patient' and 'triage' in modules:
-            try:
-                print(f"\n[DEBUG] 调用导诊服务，输入: {text}")
-                triage_result = modules['triage'].analyze(text)
-                print(f"[DEBUG] 导诊结果: 科室={triage_result.get('department', {}).get('name', '未匹配')}")
-                print(f"[DEBUG] 导诊结果: 医生={[d['name'] for d in triage_result.get('doctors', [])]}")
-                print(f"[DEBUG] 导诊结果: 回复={triage_result.get('response', '')[:100]}...")
-                logger.info(f"[导诊] 科室: {triage_result.get('department', {}).get('name', '未匹配')}")
-                
-                # 如果导诊服务返回了回复，直接使用
-                if triage_result.get('response'):
-                    response_text = triage_result['response']
-                    # 即使使用导诊回复，也需要调用对话模块以获取 RAG 信息
-                    dialogue_result = modules['dialogue'].chat(
-                        query=text,
-                        session_id=f"{session_id}_{current_mode}",
-                        system_prompt=system_prompt
-                    )
-                else:
-                    # 否则使用对话模块生成回复
+            # 判断是否需要导诊的关键词
+            triage_keywords = [
+                '挂什么科', '看什么科', '去哪个科', '哪个科室',
+                '挂号', '看医生', '去医院', '要不要去医院',
+                '应该挂', '建议挂', '推荐科室', '推荐医生',
+                '帮我挂', '需要看医生', '想看医生'
+            ]
+            
+            # 症状描述词（表示可能需要导诊）
+            symptom_patterns = [
+                '疼', '痛', '发烧', '发热', '咳嗽', '头晕', '恶心', '呕吐',
+                '拉肚子', '腹泻', '胸闷', '心慌', '不舒服', '难受',
+                '三天', '一周', '几天了', '好久了'
+            ]
+            
+            # 非导诊请求的关键词
+            non_triage_keywords = [
+                '吃什么', '怎么办', '注意什么', '食疗', '食物',
+                '如何预防', '怎么治', '怎么调理', '有什么偏方',
+                '你是谁', '你好', '谢谢', '再见'
+            ]
+            
+            # 检测是否明确请求导诊
+            needs_triage = any(kw in text for kw in triage_keywords)
+            
+            # 如果没有明确请求导诊，但有症状描述且没有非导诊关键词，也触发导诊
+            has_symptoms = any(kw in text for kw in symptom_patterns)
+            has_non_triage = any(kw in text for kw in non_triage_keywords)
+            
+            if not needs_triage and has_symptoms and not has_non_triage:
+                # 症状描述，可能需要导诊，但不确定
+                # 可以考虑提示用户是否需要导诊，这里暂时触发导诊
+                needs_triage = True
+            
+            print(f"\n[DEBUG] 意图分析: 需要导诊={needs_triage}, 有症状={has_symptoms}, 非导诊={has_non_triage}")
+            
+            if needs_triage:
+                try:
+                    print(f"[DEBUG] 调用导诊服务，输入: {text}")
+                    triage_result = modules['triage'].analyze(text)
+                    print(f"[DEBUG] 导诊结果: 科室={triage_result.get('department', {}).get('name', '未匹配')}")
+                    
+                    # 只有当匹配到科室时才使用导诊回复
+                    if triage_result.get('department') and triage_result.get('response'):
+                        print(f"[DEBUG] 使用导诊服务回复")
+                        response_text = triage_result['response']
+                        # 即使使用导诊回复，也需要调用对话模块以获取 RAG 信息
+                        dialogue_result = modules['dialogue'].chat(
+                            query=text,
+                            session_id=f"{session_id}_{current_mode}",
+                            system_prompt=system_prompt
+                        )
+                    else:
+                        print(f"[DEBUG] 导诊未匹配到科室，使用普通对话")
+                        dialogue_result = modules['dialogue'].chat(
+                            query=text,
+                            session_id=f"{session_id}_{current_mode}",
+                            system_prompt=system_prompt
+                        )
+                        response_text = dialogue_result.get('response', '')
+                except Exception as e:
+                    print(f"[DEBUG] 导诊服务失败: {e}")
+                    logger.warning(f"Triage failed, using dialogue: {e}")
                     dialogue_result = modules['dialogue'].chat(
                         query=text,
                         session_id=f"{session_id}_{current_mode}",
                         system_prompt=system_prompt
                     )
                     response_text = dialogue_result.get('response', '')
-            except Exception as e:
-                logger.warning(f"[导诊] 导诊服务失败，使用对话模块: {e}")
+            else:
+                print(f"[DEBUG] 非导诊请求，使用普通对话")
                 dialogue_result = modules['dialogue'].chat(
                     query=text,
                     session_id=f"{session_id}_{current_mode}",

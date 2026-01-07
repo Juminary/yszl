@@ -80,7 +80,7 @@ tts:
   provider: "modelscope"
   device: "cuda"  # 使用GPU加速
   sample_rate: 22050
-  fast_mode: false  # CosyVoice模式（false=高质量，true=快速但低质量） pip install edge-tts
+  fast_mode: true  # CosyVoice模式（false=高质量，true=快速但低质量） pip install edge-tts
   streaming: true  # 启用流式TTS（边生成边播放）
 
 # 音频处理配置
