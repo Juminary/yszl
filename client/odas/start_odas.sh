@@ -115,7 +115,8 @@ start_odas() {
     
     # 动态更新配置文件中的 card ID (临时文件)
     RUNTIME_CONFIG="/tmp/odas_runtime.cfg"
-    sed "s/card = [0-9]\+;/card = $CARD_ID;/" "$CONFIG_FILE" > "$RUNTIME_CONFIG"
+    # 使用更加精确的正则匹配，防止意外替换
+    sed "s/card = [0-9]\+;/card = $CARD_ID; \/* Auto-detected *\//" "$CONFIG_FILE" > "$RUNTIME_CONFIG"
     
     # 后台启动 ODAS
     log_info "Starting ODAS..."
