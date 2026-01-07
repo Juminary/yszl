@@ -78,3 +78,4 @@ server/data/Huatuo26M-Lite/*
 !server/data/Huatuo26M-Lite/.gitkeep
 *.jsonl
 
+client/odas/odas_build/

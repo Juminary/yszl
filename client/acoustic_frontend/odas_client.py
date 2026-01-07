@@ -233,6 +233,8 @@ class ODASClient:
                 
                 self._sst_socket.settimeout(1.0)
                 buffer = ""
+                brace_count = 0
+                json_start = -1
                 
                 while self._running:
                     try:
@@ -243,12 +245,29 @@ class ODASClient:
                         
                         buffer += data
                         
-                        # 解析完整的 JSON 对象
-                        while '\n' in buffer:
-                            line, buffer = buffer.split('\n', 1)
-                            line = line.strip()
-                            if line:
-                                self._parse_sst_json(line)
+                        # 解析多行 JSON 对象 (ODAS 输出格式是多行的)
+                        i = 0
+                        while i < len(buffer):
+                            c = buffer[i]
+                            if c == '{':
+                                if brace_count == 0:
+                                    json_start = i
+                                brace_count += 1
+                            elif c == '}':
+                                brace_count -= 1
+                                if brace_count == 0 and json_start >= 0:
+                                    # 找到完整的 JSON 对象
+                                    json_str = buffer[json_start:i+1]
+                                    self._parse_sst_json(json_str)
+                                    buffer = buffer[i+1:]
+                                    i = -1  # 重置索引
+                                    json_start = -1
+                            i += 1
+                        
+                        # 如果 buffer 太长但没有完整 JSON，清理开头的非 JSON 内容
+                        if json_start > 0 and len(buffer) > 10000:
+                            buffer = buffer[json_start:]
+                            json_start = 0
                     
                     except socket.timeout:
                         continue
