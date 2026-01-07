@@ -192,4 +192,4 @@ knowledge_graph:
   host: "localhost"
   port: 7474
   user: "neo4j"
-  password: "neo4j12345"  # Neo4j 要求密码至少8个字符
+  password: "12345678"  # Neo4j 要求密码至少8个字符
