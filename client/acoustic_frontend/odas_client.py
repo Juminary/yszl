@@ -183,9 +183,9 @@ class ODASClient:
         self._sst_thread = threading.Thread(target=self._sst_receiver, daemon=True)
         self._sst_thread.start()
         
-        # 可选: 启动 SSS 接收线程
-        # self._sss_thread = threading.Thread(target=self._sss_receiver, daemon=True)
-        # self._sss_thread.start()
+        # 启动 SSS (Pots) 接收线程
+        self._sss_thread = threading.Thread(target=self._sss_receiver, daemon=True)
+        self._sss_thread.start()
         
         logger.info("ODASClient started")
     
@@ -315,9 +315,52 @@ class ODASClient:
             logger.debug(f"Invalid JSON from SST: {e}")
     
     def _sss_receiver(self):
-        """SSS (分离音频) 数据接收线程"""
-        # TODO: 实现分离音频接收
-        pass
+        """SSS (分离音频/Pots) 数据接收线程 - 充当 TCP 服务器等待 ODAS 连接"""
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        
+        try:
+            server_socket.bind((self.sss_host, self.sss_port))
+            server_socket.listen(1)
+            server_socket.settimeout(1.0)
+            logger.info(f"ODAS SSS/Pots Server listening on {self.sss_host}:{self.sss_port}")
+        except Exception as e:
+            logger.error(f"Failed to bind SSS server to {self.sss_host}:{self.sss_port}: {e}")
+            return
+
+        while self._running:
+            try:
+                try:
+                    self._sss_socket, addr = server_socket.accept()
+                    logger.info(f"ODAS SSS/Pots connected from {addr}")
+                except socket.timeout:
+                    continue
+                
+                self._sss_socket.settimeout(1.0)
+                while self._running:
+                    try:
+                        data = self._sss_socket.recv(4096)
+                        if not data:
+                            logger.warning("ODAS SSS/Pots connection closed by peer")
+                            break
+                        # 目前仅丢弃数据，以防阻塞 ODAS
+                    except socket.timeout:
+                        continue
+                    except Exception as e:
+                        logger.error(f"SSS receive error: {e}")
+                        break
+                
+                if self._sss_socket:
+                    self._sss_socket.close()
+                    self._sss_socket = None
+                    
+            except Exception as e:
+                if self._running:
+                    logger.error(f"SSS server error: {e}")
+                    time.sleep(1)
+        
+        server_socket.close()
+        logger.info("ODAS SSS/Pots Server stopped")
     
     def get_tracked_sources(self, active_only: bool = True) -> List[TrackedSource]:
         """
