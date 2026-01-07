@@ -1389,24 +1389,7 @@ def chat_endpoint():
             )
             response_text = dialogue_result.get('response', '')
         
-        # 5. 语音合成（使用选择的音色克隆）
-        # 如果回复文本为空，不进行TTS合成
-        if not response_text or not response_text.strip():
-            logger.warning("Response text is empty, skipping TTS synthesis")
-            tts_result = {
-                "audio": None,
-                "sample_rate": 0,
-                "output_path": None,
-                "text": "",
-                "error": "Empty response text"
-            }
-        else:
-            tts_result = modules['tts'].synthesize(
-                text=response_text,
-                voice_clone_id=voice_clone_id
-            )
-        
-        # 广播消息到网页（包含识别结果）
+        # 广播消息到网页（包含识别结果）- 在 TTS 之前执行
         broadcast_message('user_message', {
             'text': text, 
             'mode': current_mode, 
@@ -1436,53 +1419,116 @@ def chat_endpoint():
             }
         broadcast_message('assistant_message', broadcast_data)
         
-        # 返回完整结果
-        result = {
-            "asr": asr_result,
-            "emotion": emotion_result,
-            "speaker": speaker_result,
-            "response": response_text,
-            "tts": {
-                "output_path": tts_result.get('output_path'),
-                "duration": tts_result.get('duration')
-            }
-        }
+        # 5. 流式语音合成（使用选择的音色克隆）
+        # 如果回复文本为空，返回 JSON 错误
+        if not response_text or not response_text.strip():
+            logger.warning("Response text is empty, skipping TTS synthesis")
+            return jsonify({
+                "error": "Empty response text",
+                "asr": asr_result,
+                "emotion": emotion_result,
+                "speaker": speaker_result,
+                "response": ""
+            })
         
-        # 添加导诊结果
-        if triage_result:
-            result['triage'] = {
-                'department': triage_result.get('department', {}),
-                'doctors': triage_result.get('doctors', []),
-                'diseases': triage_result.get('diseases', []),
-                'symptoms': triage_result.get('symptoms', [])
-            }
+        # 检查 TTS 模块
+        tts_module = modules.get('tts')
+        if tts_module is None:
+            return jsonify({"error": "TTS module not available"}), 500
         
-        # 如果有音频文件，返回音频
-        if tts_result.get('output_path') and os.path.exists(tts_result['output_path']):
-            from flask import make_response
-            from urllib.parse import quote
-            response = make_response(send_file(
-                tts_result['output_path'],
+        # 准备响应头信息
+        from urllib.parse import quote
+        
+        # 检查是否支持流式 TTS
+        if hasattr(tts_module, 'synthesize_stream'):
+            # 使用流式 TTS（支持音色克隆需要使用 synthesize_stream_with_clone）
+            def generate_stream():
+                """生成器函数，逐块返回音频数据"""
+                try:
+                    # 注意：synthesize_stream 目前不支持音色克隆
+                    # 如果需要音色克隆，使用普通 synthesize 然后流式返回
+                    if voice_clone_id:
+                        # 音色克隆模式：先完整合成，再流式返回
+                        logger.info(f"[Streaming TTS] Using voice clone: {voice_clone_id}")
+                        result = tts_module.synthesize(text=response_text, voice_clone_id=voice_clone_id)
+                        if result.get('output_path') and os.path.exists(result['output_path']):
+                            with open(result['output_path'], 'rb') as f:
+                                while True:
+                                    chunk = f.read(4096)
+                                    if not chunk:
+                                        break
+                                    yield chunk
+                    else:
+                        # 无音色克隆：使用真正的流式合成
+                        for chunk in tts_module.synthesize_stream(response_text, None, 1.0):
+                            yield chunk
+                except Exception as e:
+                    logger.error(f"[Streaming TTS] Error: {e}")
+            
+            # 构建流式响应
+            from flask import Response
+            response = Response(
+                generate_stream(),
                 mimetype='audio/wav',
-                as_attachment=True,
-                download_name='response.wav'
-            ))
-            # 添加自定义响应头（URL编码中文字符）
-            response.headers['X-ASR-Text'] = quote(text, safe='')
-            response.headers['X-Response-Text'] = quote(response_text, safe='')
-            response.headers['X-Emotion'] = quote(str(emotion_result.get('emotion', '')), safe='')
-            response.headers['X-Speaker'] = quote(str(speaker_result.get('speaker_id', '')), safe='')
-            # 安全访问 dialogue_result，如果未定义则使用默认值
-            if dialogue_result:
-                response.headers['X-RAG-Used'] = str(dialogue_result.get('rag_used', False))
-                response.headers['X-RAG-Context'] = quote(dialogue_result.get('rag_context', ''), safe='')
-            else:
-                response.headers['X-RAG-Used'] = 'False'
-                response.headers['X-RAG-Context'] = ''
-            response.headers['X-Mode-Switched'] = 'false'
+                headers={
+                    'Transfer-Encoding': 'chunked',
+                    'X-Content-Type-Options': 'nosniff',
+                    'X-ASR-Text': quote(text, safe=''),
+                    'X-Response-Text': quote(response_text, safe=''),
+                    'X-Emotion': quote(str(emotion_result.get('emotion', '')), safe=''),
+                    'X-Speaker': quote(str(speaker_result.get('speaker_id', '')), safe=''),
+                    'X-RAG-Used': str(dialogue_result.get('rag_used', False)) if dialogue_result else 'False',
+                    'X-RAG-Context': quote(dialogue_result.get('rag_context', '') if dialogue_result else '', safe=''),
+                    'X-Mode-Switched': 'false'
+                }
+            )
+            
+            # 添加导诊信息到响应头
+            if triage_result:
+                response.headers['X-Triage-Department'] = quote(triage_result.get('department', {}).get('name', ''), safe='')
+                doctors = triage_result.get('doctors', [])
+                if doctors:
+                    response.headers['X-Triage-Doctor'] = quote(doctors[0].get('name', ''), safe='')
+            
             return response
         else:
-            return jsonify(result)
+            # 回退到普通 TTS（不支持流式的情况）
+            logger.warning("TTS module does not support streaming, using regular synthesis")
+            tts_result = tts_module.synthesize(
+                text=response_text,
+                voice_clone_id=voice_clone_id
+            )
+            
+            # 如果有音频文件，返回音频
+            if tts_result.get('output_path') and os.path.exists(tts_result['output_path']):
+                from flask import make_response
+                response = make_response(send_file(
+                    tts_result['output_path'],
+                    mimetype='audio/wav',
+                    as_attachment=True,
+                    download_name='response.wav'
+                ))
+                # 添加自定义响应头（URL编码中文字符）
+                response.headers['X-ASR-Text'] = quote(text, safe='')
+                response.headers['X-Response-Text'] = quote(response_text, safe='')
+                response.headers['X-Emotion'] = quote(str(emotion_result.get('emotion', '')), safe='')
+                response.headers['X-Speaker'] = quote(str(speaker_result.get('speaker_id', '')), safe='')
+                if dialogue_result:
+                    response.headers['X-RAG-Used'] = str(dialogue_result.get('rag_used', False))
+                    response.headers['X-RAG-Context'] = quote(dialogue_result.get('rag_context', ''), safe='')
+                else:
+                    response.headers['X-RAG-Used'] = 'False'
+                    response.headers['X-RAG-Context'] = ''
+                response.headers['X-Mode-Switched'] = 'false'
+                return response
+            else:
+                return jsonify({
+                    "asr": asr_result,
+                    "emotion": emotion_result,
+                    "speaker": speaker_result,
+                    "response": response_text,
+                    "tts": {"output_path": None, "error": tts_result.get('error', 'Unknown error')}
+                })
         
     except Exception as e:
         logger.error(f"Chat endpoint error: {e}")

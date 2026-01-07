@@ -543,11 +543,13 @@ class TTSModule:
                 audio_bytes = audio_int16.tobytes()
                 
                 if first_chunk:
-                    # 发送 WAV 头部（假设总长度，实际用 chunked transfer）
-                    header = self._create_wav_header(len(audio_bytes), self.sample_rate)
+                    # 发送 WAV 头部（使用一个足够大的占位长度，约10分钟音频）
+                    # 这样播放器会持续播放直到数据结束
+                    estimated_total_size = self.sample_rate * 2 * 60 * 10  # 10分钟单声道16bit音频
+                    header = self._create_wav_header(estimated_total_size, self.sample_rate)
                     yield header + audio_bytes
                     first_chunk = False
-                    logger.info(f"[Streaming TTS] First chunk sent ({len(audio_bytes)} bytes)")
+                    logger.info(f"[Streaming TTS] First chunk sent ({len(audio_bytes)} bytes, header declares ~10min)")
                 else:
                     yield audio_bytes
             
