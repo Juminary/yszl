@@ -16,7 +16,7 @@ fi
 
 # 检查服务器是否运行
 echo "检查服务器连接..."
-if curl -s http://localhost:6007/health > /dev/null 2>&1; then
+if curl -s http://localhost:6008/health > /dev/null 2>&1; then
     echo "✓ 服务器已连接"
 else
     echo "⚠ 警告: 服务器未响应，请确保服务器已启动"

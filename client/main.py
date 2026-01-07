@@ -360,7 +360,7 @@ class VoiceAssistantClient:
                 if result.get('voice_clone_registered'):
                     print(f"✅ 音色克隆注册成功: {speaker_id}")
                     print("   现在可以在对话中选择使用此音色了")
-            else:
+                else:
                     print(f"⚠️  音色克隆注册失败")
                     if result.get('voice_clone_error'):
                         print(f"   错误: {result.get('voice_clone_error')}")
@@ -593,21 +593,21 @@ class VoiceAssistantClient:
                     progress_thread = threading.Thread(target=show_progress, daemon=True)
                     progress_thread.start()
                     
-                try:
-                    with open(temp_audio, 'rb') as f:
-                        files = {'audio': f}
-                        data = {'session_id': self.session_id}
+                    try:
+                        with open(temp_audio, 'rb') as f:
+                            files = {'audio': f}
+                            data = {'session_id': self.session_id}
                             # 如果选择了音色克隆，添加到请求中
                             if voice_clone_id:
                                 data['voice_clone_id'] = voice_clone_id
                             else:
                                 data['voice_clone_id'] = '0'  # 明确指定使用默认音色
-                        response = requests.post(
-                            f"{self.server_url}/chat",
-                            files=files,
-                            data=data,
+                            response = requests.post(
+                                f"{self.server_url}/chat",
+                                files=files,
+                                data=data,
                                 timeout=180  # 增加到180秒，TTS合成特别是音色克隆可能需要更长时间
-                        )
+                            )
                     finally:
                         progress_stop.set()
                         print()  # 换行

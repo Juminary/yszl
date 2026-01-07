@@ -33,7 +33,7 @@ speaker:
 # 对话系统配置 (支持 GGUF 量化模型)
 dialogue:
   # 模型提供者: transformers (HuggingFace), gguf (llama.cpp)
-  provider: "transformers"
+  provider: "gguf"
   
   # GGUF 配置 (当 provider=gguf 时使用)
   gguf_repo: "Qwen/Qwen3-4B-GGUF"     # ModelScope 仓库
@@ -47,7 +47,7 @@ dialogue:
   max_length: 512
   temperature: 0.7
   top_p: 0.9
-  device: "cpu"  # GGUF 使用 Metal 自动加速
+  device: "cuda"  # GGUF 使用 Metal 自动加速
   history_length: 10
   system_prompt: |
     你是一个专业的医疗语音助手。你需要根据用户的角色（患者或医生）提供不同的服务：
