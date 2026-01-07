@@ -1482,7 +1482,8 @@ def chat_endpoint():
                     'X-Speaker': quote(str(speaker_result.get('speaker_id', '')), safe=''),
                     'X-RAG-Used': str(dialogue_result.get('rag_used', False)) if dialogue_result else 'False',
                     'X-RAG-Context': quote(dialogue_result.get('rag_context', '') if dialogue_result else '', safe=''),
-                    'X-Mode-Switched': 'false'
+                    'X-Mode-Switched': 'false',
+                    'X-Streaming-Audio': 'True'  # 告知客户端这是流式音频
                 }
             )
             
@@ -1523,6 +1524,7 @@ def chat_endpoint():
                     response.headers['X-RAG-Used'] = 'False'
                     response.headers['X-RAG-Context'] = ''
                 response.headers['X-Mode-Switched'] = 'false'
+                response.headers['X-Streaming-Audio'] = 'False'  # 告知客户端这不是流式音频
                 return response
             else:
                 return jsonify({

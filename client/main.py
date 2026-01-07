@@ -625,8 +625,11 @@ class VoiceAssistantClient:
                         print(f"😊 情感: {emotion} | 🎯 说话人: {speaker}")
                         print(f"🤖 助手: {response_text}")
                         
-                        # 根据配置决定播放方式
-                        if self.use_streaming_tts:
+                        # 检查服务器返回的是否是流式音频
+                        is_streaming_audio = response.headers.get('X-Streaming-Audio', 'False') == 'True'
+                        
+                        # 根据配置和服务器响应决定播放方式
+                        if self.use_streaming_tts and is_streaming_audio:
                             # 流式播放回复音频（边下载边播放）
                             try:
                                 sample_rate = self.config.get('tts', {}).get('sample_rate', 22050)
@@ -910,9 +913,12 @@ class VoiceAssistantClient:
                     print(f"⑥ RAG知识检索: {'✓ 已使用' if rag_used else '✗ 未使用'}")
                     print(f"⑦ 助手回复: {response_text}")
                     
-                    # 根据配置决定播放方式
+                    # 检查服务器返回的是否是流式音频
+                    is_streaming_audio = response.headers.get('X-Streaming-Audio', 'False') == 'True'
+                    
+                    # 根据配置和服务器响应决定播放方式
                     print("⑧ 播放回复...")
-                    if self.use_streaming_tts:
+                    if self.use_streaming_tts and is_streaming_audio:
                         # 流式播放回复音频（边下载边播放）
                         try:
                             sample_rate = self.config.get('tts', {}).get('sample_rate', 22050)
