@@ -21,8 +21,7 @@ def test_connection():
     logger.info("You can now start ODAS using: ./start_odas.sh start")
     
     try:
-        start_time = time.time()
-        while time.time() - start_time < 30:  # 测试 30 秒
+        while True:  # 持续运行直到手动停止
             if client.is_connected():
                 sources = client.get_tracked_sources()
                 if sources:
