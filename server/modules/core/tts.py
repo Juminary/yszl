@@ -226,10 +226,97 @@ class TTSModule:
             if not os.path.exists(model_dir):
                 logger.warning(f"CosyVoice model not found at {model_dir} and download failed")
     
-    def synthesize(self, text: str, output_path: str = None,
+    def _preprocess_text(self, text: str) -> str:
+        """
+        预处理文本，确保格式正确，适合TTS合成
+        
+        Args:
+            text: 原始文本
+        
+        Returns:
+            清理后的文本
+        """
+        if not text or not text.strip():
+            return ""
+        
+        import re
+        
+        # 去除多余的空白字符
+        text = re.sub(r'\s+', ' ', text.strip())
+        
+        # 确保文本以句号结尾（CosyVoice需要）
+        if text and text[-1] not in ['。', '.', '！', '!', '？', '?']:
+            text += '。'
+        
+        # 规范化标点符号
+        text = text.replace('，', '，').replace(',', '，')
+        text = text.replace('。', '。').replace('.', '。')
+        
+        # 去除特殊字符（保留中文、英文、数字、基本标点）
+        text = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9，。！？、：；（）\s]', '', text)
+        
+        # 确保标点符号前后没有多余空格
+        text = re.sub(r'\s+([，。！？、：；）])', r'\1', text)
+        text = re.sub(r'([（])\s+', r'\1', text)
+        
+        return text.strip()
+    
+    def _split_long_text(self, text: str, max_length: int = 200) -> list:
+        """
+        将长文本分段，确保每段不超过最大长度
+        
+        Args:
+            text: 要分段的文本
+            max_length: 每段最大长度（字符数）
+        
+        Returns:
+            文本段列表
+        """
+        if len(text) <= max_length:
+            return [text]
+        
+        # 按句号、问号、感叹号分段
+        import re
+        sentences = re.split(r'([。！？])', text)
+        
+        segments = []
+        current_segment = ""
+        
+        for i in range(0, len(sentences), 2):
+            sentence = sentences[i] + (sentences[i+1] if i+1 < len(sentences) else '')
+            
+            if len(current_segment) + len(sentence) <= max_length:
+                current_segment += sentence
+            else:
+                if current_segment:
+                    segments.append(current_segment)
+                # 如果单个句子就超过max_length，强制分段
+                if len(sentence) > max_length:
+                    # 按逗号进一步分段
+                    sub_sentences = re.split(r'([，,])', sentence)
+                    temp = ""
+                    for j in range(0, len(sub_sentences), 2):
+                        sub = sub_sentences[j] + (sub_sentences[j+1] if j+1 < len(sub_sentences) else '')
+                        if len(temp) + len(sub) <= max_length:
+                            temp += sub
+                        else:
+                            if temp:
+                                segments.append(temp)
+                            temp = sub
+                    current_segment = temp
+                else:
+                    current_segment = sentence
+        
+        if current_segment:
+            segments.append(current_segment)
+        
+        return segments if segments else [text]
+    
+    def synthesize(self, text: str, output_path: str = None, 
                    speaker: str = None, language: str = "zh-cn",
                    speed: float = 1.0, style: str = None,
-                   instruct: str = None, voice_clone_id: str = None) -> Dict:
+                   instruct: str = None, voice_clone_id: str = None,
+                   max_retries: int = 2) -> Dict:
         """
         合成语音
         
@@ -242,6 +329,7 @@ class TTSModule:
             style: 风格 (soothing, professional, friendly)
             instruct: 指令文本，用于控制语音风格
             voice_clone_id: 音色克隆ID（如果提供，将使用该音色克隆）
+            max_retries: 最大重试次数（当合成失败时）
         
         Returns:
             合成结果
@@ -254,26 +342,34 @@ class TTSModule:
                 "text": text,
                 "error": "CosyVoice model not available"
             }
-
+        
+        # 预处理文本
+        text = self._preprocess_text(text)
+        if not text:
+            return {
+                "audio": None,
+                "sample_rate": 0,
+                "output_path": None,
+                "text": text,
+                "error": "Empty text after preprocessing"
+            }
+        
         try:
+            import torchaudio
+            
             # 生成输出路径
             if output_path is None:
                 base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                 temp_dir = Path(base_dir) / "temp"
                 temp_dir.mkdir(exist_ok=True)
                 output_path = str(temp_dir / f"tts_{abs(hash(text))}.wav")
-
-            # 将长文本拆句，避免一次性推理被截断
-            text_segments = self._split_text(text, max_len=120)
-
-            audio_outputs = []
-
+            
             # 检查是否使用音色克隆
             if voice_clone_id and voice_clone_id in self.voice_clones:
                 # 使用音色克隆
                 prompt_wav = self.voice_clones[voice_clone_id]
-
-                # 从 speaker_db 获取 prompt_text（如果存在）
+                
+                # 从speaker_db获取prompt_text（如果存在）
                 prompt_text = "你好，我是医生，很高兴为您服务。"  # 默认提示文本
                 try:
                     speaker_db_path = Path(__file__).parent.parent.parent / "data" / "speaker_db.pkl"
@@ -285,53 +381,103 @@ class TTSModule:
                             metadata = speaker_db[voice_clone_id].get('metadata', {})
                             if metadata.get('prompt_text'):
                                 prompt_text = metadata['prompt_text']
-                                # 限制 prompt_text 长度（建议不超过 50 字，约 10 秒）
+                                # 限制prompt_text长度（建议不超过50字，约10秒）
                                 if len(prompt_text) > 50:
                                     logger.warning(f"Prompt text too long ({len(prompt_text)} chars), truncating to 50 chars")
                                     prompt_text = prompt_text[:50]
                 except Exception as e:
                     logger.warning(f"Failed to load prompt_text from speaker_db: {e}")
+                
+                # 预处理prompt_text
+                prompt_text = self._preprocess_text(prompt_text)
+                
+                logger.info(f"Using voice clone: {voice_clone_id}, prompt_text: {prompt_text[:30]}... ({len(prompt_text)} chars), text length: {len(text)} chars")
+                
+                audio_outputs = []
+                # 将文本切成更短的片段，降低中途截断概率
+                text_segments = self._split_long_text(text, max_length=80)
+                logger.info(f"Text split into {len(text_segments)} segments for zero-shot voice clone (max_len=80)")
 
-                logger.info(
-                    f"Using voice clone: {voice_clone_id}, "
-                    f"prompt_text: {prompt_text[:30]}... ({len(prompt_text)} chars), "
-                    f"text: {text[:50]}..."
-                )
+                # 逐段零样本合成，失败的段在重试后才回退到默认音色
+                for segment in text_segments:
+                    segment_audio = []
+                    clone_success = False
+                    # 重试 zero-shot，尽量保留克隆音色
+                    for retry in range(max_retries + 1):
+                        try:
+                            for output in self.model.inference_zero_shot(
+                                tts_text=segment,
+                                prompt_text=prompt_text,
+                                prompt_wav=prompt_wav,
+                                zero_shot_spk_id=voice_clone_id,
+                                stream=False,
+                                speed=speed,
+                                text_frontend=False,
+                                play_prompt=self.play_prompt
+                            ):
+                                if output.get("tts_speech") is not None:
+                                    segment_audio.append(output["tts_speech"])
+                            if segment_audio:
+                                clone_success = True
+                                break
+                            raise ValueError("Zero-shot segment produced no audio")
+                        except Exception as seg_err:
+                            logger.warning(
+                                f"Zero-shot segment failed (attempt {retry+1}/{max_retries+1}): {seg_err}, segment: {segment[:50]}..."
+                            )
+                            segment_audio = []
 
-                try:
-                    for segment in text_segments:
-                        # 强制不朗读提示词，避免输出中带 prompt
-                        for output in self.model.inference_zero_shot(
-                            tts_text=segment,
-                            prompt_text=prompt_text,
-                            prompt_wav=prompt_wav,
-                            zero_shot_spk_id=voice_clone_id,
+                    # 如果克隆重试后仍失败，回退到默认音色合成该分段
+                    if not clone_success:
+                        fallback_speaker = speaker or (self.available_spks[0] if self.available_spks else None)
+                        if fallback_speaker:
+                            logger.info(f"Falling back to default voice for segment: {segment[:30]}...")
+                            for output in self.model.inference_sft(
+                                tts_text=segment,
+                                spk_id=fallback_speaker,
+                                stream=False,
+                                speed=speed
+                            ):
+                                if output.get("tts_speech") is not None:
+                                    segment_audio.append(output["tts_speech"])
+
+                    if segment_audio:
+                        audio_outputs.extend(segment_audio)
+
+                # 如果最终仍无音频（极端情况），再用默认音色合成全文兜底
+                if not audio_outputs:
+                    fallback_speaker = speaker or (self.available_spks[0] if self.available_spks else None)
+                    if fallback_speaker:
+                        logger.warning("Zero-shot and per-segment fallback produced no audio; using default voice for full text.")
+                        for output in self.model.inference_sft(
+                            tts_text=text,
+                            spk_id=fallback_speaker,
                             stream=False,
-                            speed=speed,
-                            play_prompt=False
+                            speed=speed
                         ):
-                            if 'tts_speech' in output and output['tts_speech'] is not None:
-                                audio_outputs.append(output['tts_speech'])
+                            if output.get("tts_speech") is not None:
+                                audio_outputs.append(output["tts_speech"])
+            else:
+                # 使用标准语音合成
+                fallback_speaker = speaker or (self.available_spks[0] if self.available_spks else None)
+                if fallback_speaker is None:
+                    logger.error("No speaker available for synthesis")
+                    return {
+                        "audio": None,
+                        "sample_rate": 0,
+                        "output_path": None,
+                        "text": text,
+                        "error": "No speaker available"
+                    }
 
-                    # 如果音色克隆失败（没有输出），回退到默认音色
-                    if not audio_outputs:
-                        logger.warning("Voice clone synthesis produced no output, falling back to default voice")
-                        raise ValueError("Voice clone synthesis produced no output")
-                except Exception as e:
-                    logger.error(f"Voice clone synthesis failed: {e}, falling back to default voice")
-                    # 回退到默认音色
-                    voice_clone_id = None
-                    audio_outputs = []
+                speaker = fallback_speaker
+                logger.info(f"Synthesizing with speaker: {speaker}, text length: {len(text)} chars")
 
-            # 如果没有使用 / 或已经从音色克隆回退，则使用标准语音合成
-            if not audio_outputs:
-                # 选择说话人
-                if speaker is None and self.available_spks:
-                    # 默认使用第一个可用的说话人
-                    speaker = self.available_spks[0]
-
-                logger.info(f"Synthesizing with speaker: {speaker}, text: {text[:50]}...")
-
+                # 使用标准语音合成（默认音色），固定分段合成，降低长句截断风险
+                audio_outputs = []
+                text_segments = self._split_long_text(text, max_length=80)
+                if len(text_segments) > 1:
+                    logger.info(f"Text split into {len(text_segments)} segments for standard synthesis (max_len=80)")
                 for segment in text_segments:
                     try:
                         # instruct 提示强约束语气；若失败则回退到普通合成
@@ -352,8 +498,8 @@ class TTSModule:
                             )
 
                         for output in iterator:
-                            if 'tts_speech' in output and output['tts_speech'] is not None:
-                                audio_outputs.append(output['tts_speech'])
+                            if output.get("tts_speech") is not None:
+                                audio_outputs.append(output["tts_speech"])
                     except Exception as e:
                         logger.warning(f"Instruct synthesis failed, falling back to sft: {e}")
                         for output in self.model.inference_sft(
@@ -362,11 +508,10 @@ class TTSModule:
                             stream=False,
                             speed=speed
                         ):
-                            if 'tts_speech' in output and output['tts_speech'] is not None:
-                                audio_outputs.append(output['tts_speech'])
-
+                            if output.get("tts_speech") is not None:
+                                audio_outputs.append(output["tts_speech"])
             if audio_outputs:
-                # 合并音频（audio_outputs 是 [1, T] 的列表，按时间维拼接）
+                # 合并音频
                 audio = torch.cat(audio_outputs, dim=1)
                 
                 # 检查音频是否有效
@@ -445,35 +590,6 @@ class TTSModule:
                 "text": text,
                 "error": str(e)
             }
-
-    def _split_text(self, text: str, max_len: int = 120):
-        """
-        将长文本拆分为短句，减少TTS截断风险
-        """
-        import re
-        if len(text) <= max_len:
-            return [text]
-
-        # 按句号/问号/感叹号/分号切分
-        sentences = re.split(r'(?<=[。！？!?；;])', text)
-        chunks = []
-        buffer = ""
-        for sent in sentences:
-            sent = sent.strip()
-            if not sent:
-                continue
-            candidate = buffer + sent
-            if len(candidate) <= max_len:
-                buffer = candidate
-            else:
-                if buffer:
-                    chunks.append(buffer)
-                buffer = sent
-        if buffer:
-            chunks.append(buffer)
-
-        # 如果拆分失败，至少返回原文本
-        return chunks or [text]
     
     def synthesize_with_emotion(self, text: str, emotion: str,
                                 output_path: str = None,

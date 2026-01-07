@@ -625,12 +625,12 @@ class VoiceAssistantClient:
                         print(f"😊 情感: {emotion} | 🎯 说话人: {speaker}")
                         print(f"🤖 助手: {response_text}")
                         
-                        # 检查服务器返回的是否是流式音频
+                        # 检查服务器是否返回流式音频标记
                         is_streaming_audio = response.headers.get('X-Streaming-Audio', 'False') == 'True'
                         
-                        # 根据配置和服务器响应决定播放方式
+                        # 流式：边下边播且写文件；否则直接落盘播放
                         if self.use_streaming_tts and is_streaming_audio:
-                            # 流式播放回复音频（边下载边播放）
+                            response_audio = "temp_response_stream.wav"
                             try:
                                 sample_rate = self.config.get('tts', {}).get('sample_rate', 22050)
                                 streaming_player = self.player.create_streaming_player(
@@ -641,25 +641,40 @@ class VoiceAssistantClient:
                                 total_bytes = 0
                                 first_chunk_time = None
                                 header_skipped = False
+                                header_buf = bytearray()
                                 start_time = time.time()
                                 
-                                # 边下载边播放
-                                for chunk in response.iter_content(chunk_size=4096):
-                                    if chunk:
+                                with open(response_audio, 'wb') as f:
+                                    # 边下载边播放，同时写入文件
+                                    for chunk in response.iter_content(chunk_size=4096):
+                                        if not chunk:
+                                            continue
+                                        
+                                        # 记录首包延迟
                                         if first_chunk_time is None:
                                             first_chunk_time = time.time()
                                             latency = first_chunk_time - start_time
                                             print(f"🔊 首音频延迟: {latency:.2f}s")
                                         
-                                        # 跳过 WAV 头部（44 字节）
-                                        if not header_skipped and len(chunk) >= 44:
-                                            if chunk[:4] == b'RIFF':
-                                                chunk = chunk[44:]
-                                                header_skipped = True
+                                        # 处理 WAV 头：累计到44字节后再跳过
+                                        if not header_skipped:
+                                            header_buf.extend(chunk)
+                                            if len(header_buf) < 44:
+                                                continue
+                                            # 现在至少有44字节
+                                            if header_buf[:4] == b'RIFF':
+                                                audio_bytes = header_buf[44:]
+                                            else:
+                                                # 如果没有标准头，当作纯音频处理
+                                                audio_bytes = bytes(header_buf)
+                                            header_skipped = True
+                                        else:
+                                            audio_bytes = chunk
                                         
-                                        if chunk:
-                                            streaming_player.feed(chunk)
-                                            total_bytes += len(chunk)
+                                        if audio_bytes:
+                                            streaming_player.feed(audio_bytes)
+                                            f.write(audio_bytes)
+                                            total_bytes += len(audio_bytes)
                                 
                                 # 等待播放完成
                                 streaming_player.wait_until_done()
@@ -667,10 +682,17 @@ class VoiceAssistantClient:
                             except Exception as e:
                                 logger.warning(f"Streaming playback failed, falling back to file playback: {e}")
                                 # 回退到文件播放
-                                response_audio = "temp_response.wav"
-                                with open(response_audio, 'wb') as f:
-                                    f.write(response.content)
-                                self.player.play_file(response_audio)
+                                response_audio_fallback = "temp_response.wav"
+                                with open(response_audio_fallback, 'wb') as f:
+                                    if response.raw and getattr(response, "iter_content", None):
+                                        for chunk in response.iter_content(chunk_size=8192):
+                                            if chunk:
+                                                f.write(chunk)
+                                    else:
+                                        f.write(response.content)
+                                self.player.play_file(response_audio_fallback)
+                                Path(response_audio_fallback).unlink(missing_ok=True)
+                            finally:
                                 Path(response_audio).unlink(missing_ok=True)
                         else:
                             # 非流式播放：保存文件后播放

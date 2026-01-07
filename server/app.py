@@ -1026,24 +1026,37 @@ def chat_endpoint():
             available_voice_clones = [str(name) for name in get_available_voice_clones() if name]
             voice_state['awaiting_selection'] = False
             selected_voice = None
-            normalized_text = text.strip()
+            normalized_text = text.strip().replace(' ', '').replace('，', '').replace(',', '')
             lower_text = normalized_text.lower()
+            
+            # 改进音色匹配逻辑：支持完整匹配、部分匹配和ID匹配
             for clone_name in available_voice_clones:
                 clone_key = str(clone_name)
-                if clone_key.lower() in lower_text:
+                clone_lower = clone_key.lower()
+                # 完整匹配
+                if clone_lower == lower_text or clone_key == normalized_text:
                     selected_voice = clone_key
                     break
+                # 部分匹配（音色名称包含在识别文本中，或识别文本包含音色名称）
+                if clone_lower in lower_text or lower_text in clone_lower:
+                    selected_voice = clone_key
+                    break
+                # ID匹配（如果音色名称是纯数字或包含数字）
+                if clone_key.isdigit() and clone_key in normalized_text:
+                    selected_voice = clone_key
+                    break
+            
             voice_response_voice = None
             if not available_voice_clones:
                 response_text = "当前没有可切换的音色，将继续使用默认音色。"
                 voice_state['current'] = None
             elif selected_voice:
                 voice_state['current'] = selected_voice
-                response_text = f"已切换至{selected_voice}音色。"
+                response_text = "已成功切换"
                 voice_response_voice = selected_voice
             else:
                 voice_state['current'] = None
-                response_text = "目标音色不在列表，使用默认音色。"
+                response_text = "无目标音色，使用默认音色"
             voice_clone_id = voice_state.get('current')
             broadcast_message('user_message', {
                 'text': text,
@@ -1085,8 +1098,55 @@ def chat_endpoint():
                 'voice_target': voice_state.get('current')
             })
 
-        voice_switch_triggers = ['切换音色']
-        if any(trigger in text_clean for trigger in voice_switch_triggers):
+        # 音色切换指令检测 - 支持多种变体和部分匹配
+        def detect_voice_switch_intent(text: str) -> bool:
+            """
+            检测用户是否有切换音色的意图
+            支持多种变体：切换音色、换音色、音色、切换声音、换声音等
+            """
+            text_clean = text.strip().replace(' ', '').replace('，', '').replace(',', '').lower()
+            original_text = text.strip()
+            
+            # 完整匹配的触发词
+            full_triggers = [
+                '切换音色', '换音色', '音色切换', '切换声音', '换声音', '声音切换',
+                '改音色', '换一个音色', '换个音色', '换一下音色',
+                '切换语音', '换语音', '语音切换', '改语音',
+                '选择音色', '选音色', '换个声音', '换一个声音'
+            ]
+            
+            # 检查完整匹配
+            for trigger in full_triggers:
+                if trigger in text_clean:
+                    logger.info(f"[Voice Switch] 检测到完整匹配触发词: '{trigger}' in '{original_text}'")
+                    return True
+            
+            # 关键词组合匹配（更灵活，支持ASR识别不准确的情况）
+            # 包含"切换"或"换" + "音色"或"声音"或"语音"
+            switch_keywords = ['切换', '换', '改', '选', '选择']
+            voice_keywords = ['音色', '声音', '语音']
+            
+            has_switch = any(kw in text_clean for kw in switch_keywords)
+            has_voice = any(kw in text_clean for kw in voice_keywords)
+            
+            # 如果同时包含切换关键词和音色关键词，认为是切换音色意图
+            if has_switch and has_voice:
+                matched_switch = [kw for kw in switch_keywords if kw in text_clean]
+                matched_voice = [kw for kw in voice_keywords if kw in text_clean]
+                logger.info(f"[Voice Switch] 检测到关键词组合: 切换词={matched_switch}, 音色词={matched_voice} in '{original_text}'")
+                return True
+            
+            # 如果只包含"音色"且文本较短（可能是识别不完整），也认为是意图
+            if has_voice and len(text_clean) <= 10:
+                # 但排除一些明显不是切换意图的情况
+                exclude_patterns = ['什么音色', '哪个音色', '音色是什么', '音色怎么样', '音色如何', '音色好不好']
+                if not any(pattern in text_clean for pattern in exclude_patterns):
+                    logger.info(f"[Voice Switch] 检测到短文本音色关键词: '{original_text}' (长度={len(text_clean)})")
+                    return True
+            
+            return False
+        
+        if detect_voice_switch_intent(text):
             available_voice_clones = [str(name) for name in get_available_voice_clones() if name]
             if available_voice_clones:
                 voice_state['awaiting_selection'] = True
