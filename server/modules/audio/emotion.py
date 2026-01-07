@@ -125,21 +125,33 @@ class EmotionModule:
             # 解析结果
             if result and len(result) > 0:
                 text_result = result[0].get("text", "")
-                
+                raw_emotion = result[0].get("emotion") or result[0].get("pred_emotion")
+
                 # SenseVoice在文本中嵌入情感标签，如 "<|HAPPY|>你好"
-                emotion = self._parse_emotion_from_text(text_result)
-                emotion_zh = self.EMOTIONS_ZH[self.EMOTIONS.index(emotion)]
-                
+                emotion_from_tag = self._parse_emotion_from_text(text_result)
+                emotion = self.SENSEVOICE_EMOTION_MAP.get((raw_emotion or '').upper(), emotion_from_tag)
+                emotion = emotion or "neutral"
+
                 # 提取韵律特征
                 prosody = self._extract_prosody(audio_path, audio_array, sample_rate)
-                
+
+                # 基于韵律的辅助判别：若模型输出为neutral且韵律特征明显偏低/高，做轻微偏移
+                heuristic = self._heuristic_emotion_from_prosody(prosody)
+                if emotion == "neutral" and heuristic:
+                    emotion = heuristic["emotion"]
+                    confidence = heuristic["confidence"]
+                else:
+                    confidence = 0.85 if emotion != "neutral" else 0.5
+
+                emotion_zh = self.EMOTIONS_ZH[self.EMOTIONS.index(emotion)]
                 return {
                     "emotion": emotion,
                     "emotion_zh": emotion_zh,
-                    "confidence": 0.85,  # SenseVoice通常有较高准确率
-                    "probabilities": {e: 0.1 for e in self.EMOTIONS},
+                    "confidence": confidence,
+                    "probabilities": {e: (heuristic.get("probabilities", {}).get(e, 0.0) if heuristic else 0.0) for e in self.EMOTIONS},
                     "prosody": prosody,
-                    "raw_text": text_result
+                    "raw_text": text_result,
+                    "raw_emotion": raw_emotion
                 }
             else:
                 return self._default_result()
@@ -209,6 +221,41 @@ class EmotionModule:
             
         except Exception as e:
             logger.error(f"Prosody extraction failed: {e}")
+            return {}
+
+    def _heuristic_emotion_from_prosody(self, prosody: Dict) -> Dict:
+        """基于简单韵律阈值的补充情感判断，缓解过度输出neutral。
+        能量/音高阈值是经验值，可按实际音频再微调。
+        """
+        try:
+            energy = prosody.get("energy_mean", 0.0)
+            pitch_mean = prosody.get("pitch_mean", 0.0)
+            pitch_std = prosody.get("pitch_std", 0.0)
+
+            # 经验阈值：低能量低音高 -> 悲伤；高能量高音高 -> 开心/愤怒。
+            if energy < 0.012 and pitch_mean < 150:
+                return {
+                    "emotion": "sad",
+                    "confidence": 0.6,
+                    "probabilities": {"sad": 0.6, "neutral": 0.4}
+                }
+            if energy > 0.05 and pitch_mean > 200:
+                # 区分开心/愤怒：音高波动较大视为开心，波动较小视为愤怒。
+                if pitch_std >= 60:
+                    return {
+                        "emotion": "happy",
+                        "confidence": 0.6,
+                        "probabilities": {"happy": 0.6, "neutral": 0.3, "angry": 0.1}
+                    }
+                else:
+                    return {
+                        "emotion": "angry",
+                        "confidence": 0.55,
+                        "probabilities": {"angry": 0.55, "neutral": 0.35, "happy": 0.1}
+                    }
+            return {}
+        except Exception as e:
+            logger.debug(f"Heuristic emotion failed: {e}")
             return {}
     
     def analyze_batch(self, audio_files: List[str]) -> List[Dict]:

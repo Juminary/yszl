@@ -30,7 +30,7 @@ from flask_cors import CORS
 import yaml
 from pathlib import Path
 import tempfile
-from datetime import datetime
+from datetime import datetime, time
 import queue
 import threading
 import json
@@ -1390,6 +1390,9 @@ def chat_endpoint():
             response_text = dialogue_result.get('response', '')
         
         # 广播消息到网页（包含识别结果）- 在 TTS 之前执行
+        emotion_label = ''
+        if isinstance(emotion_result, dict):
+            emotion_label = (emotion_result.get('emotion') or '').lower()
         broadcast_message('user_message', {
             'text': text, 
             'mode': current_mode, 
@@ -1453,7 +1456,14 @@ def chat_endpoint():
                     if voice_clone_id:
                         # 音色克隆模式：先完整合成，再流式返回
                         logger.info(f"[Streaming TTS] Using voice clone: {voice_clone_id}")
-                        result = tts_module.synthesize(text=response_text, voice_clone_id=voice_clone_id)
+                        if emotion_label and hasattr(tts_module, 'synthesize_with_emotion'):
+                            result = tts_module.synthesize_with_emotion(
+                                text=response_text,
+                                emotion=emotion_label,
+                                voice_clone_id=voice_clone_id
+                            )
+                        else:
+                            result = tts_module.synthesize(text=response_text, voice_clone_id=voice_clone_id)
                         if result.get('output_path') and os.path.exists(result['output_path']):
                             with open(result['output_path'], 'rb') as f:
                                 while True:
@@ -1498,10 +1508,17 @@ def chat_endpoint():
         else:
             # 回退到普通 TTS（不支持流式的情况）
             logger.warning("TTS module does not support streaming, using regular synthesis")
-            tts_result = tts_module.synthesize(
-                text=response_text,
-                voice_clone_id=voice_clone_id
-            )
+            if emotion_label and hasattr(tts_module, 'synthesize_with_emotion'):
+                tts_result = tts_module.synthesize_with_emotion(
+                    text=response_text,
+                    emotion=emotion_label,
+                    voice_clone_id=voice_clone_id
+                )
+            else:
+                tts_result = tts_module.synthesize(
+                    text=response_text,
+                    voice_clone_id=voice_clone_id
+                )
             
             # 如果有音频文件，返回音频
             if tts_result.get('output_path') and os.path.exists(tts_result['output_path']):

@@ -7,11 +7,143 @@ import sys
 import os
 import torch
 import logging
-from typing import Dict
+from typing import Dict, List, Tuple, Optional
 import numpy as np
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+class MockSenseVoice:
+    """Lightweight placeholder for the SenseVoice ASR + emotion model."""
+
+    def transcribe(self, audio_path: str) -> Dict[str, str]:
+        # In production, call the real SenseVoice model here.
+        return {"text": "This is a placeholder user utterance.", "emotion": "neutral"}
+
+
+class MockCosyVoice:
+    """Lightweight placeholder for CosyVoice instruct TTS."""
+
+    def synthesize(self, text: str, instruct: Optional[str] = None, **_: Dict) -> Dict:
+        # In production, call CosyVoice.inference_instruct or a wrapped TTSModule.synthesize.
+        return {
+            "audio": b"",  # placeholder bytes
+            "sample_rate": 22050,
+            "output_path": None,
+            "text": text,
+            "instruct": instruct,
+            "method": "mock_cosyvoice",
+        }
+
+
+class MockLLMClient:
+    """Minimal OpenAI-compatible mock client with a chat() method."""
+
+    def __init__(self, model: str = "gpt-4.1-mini"):
+        self.model = model
+
+    def chat(self, messages: List[Dict[str, str]]) -> str:
+        # Deterministic stub output to make the parsing logic easy to see.
+        return "[A comforting adult with warm tone and slower pace] <endofprompt> I am here for you and will help."  # noqa: E501
+
+
+class EmotionalVoiceChatController:
+    """Orchestrates SenseVoice -> LLM -> CosyVoice with emotion-aware styling."""
+
+    def __init__(
+        self,
+        sense_voice=None,
+        cosy_voice=None,
+        llm_client=None,
+        llm_model: str = "gpt-4.1-mini",
+    ) -> None:
+        self.sense_voice = sense_voice or MockSenseVoice()
+        self.cosy_voice = cosy_voice or MockCosyVoice()
+        self.llm_client = llm_client or MockLLMClient(model=llm_model)
+
+        # Maps user emotion to how the AI should sound (do not mirror emotion one-to-one).
+        self.emotion_to_style = {
+            "sad": "A comforting adult with warm tone and slower pace",
+            "angry": "A calm and respectful adult with steady tone and medium-slow pace",
+            "happy": "An upbeat young adult with bright tone and lively but controlled pace",
+            "anxious": "A reassuring adult with soft tone and measured pace",
+            "fear": "A steady guide with gentle tone and unhurried pace",
+            "neutral": "A professional adult with clear tone and medium pace",
+        }
+
+    def _map_user_emotion(self, user_emotion: str) -> str:
+        normalized = (user_emotion or "").lower().strip()
+        return self.emotion_to_style.get(normalized, self.emotion_to_style["neutral"])
+
+    def _build_system_prompt(self, target_style: str) -> str:
+        return (
+            "You are an empathetic, concise dialogue agent for healthcare-style conversations. "
+            "Always speak naturally as if talking, not writing. \n"
+            "You receive the user's transcribed speech and their detected emotion. \n"
+            "Pick a speaking persona that supports the user; never mirror negative emotions back. \n"
+            "Output format (strict): [Speaking Style Description] <endofprompt> [Spoken Content]. \n"
+            "Speaking Style Description should be 8-18 words, concrete, and mention tone and pace. \n"
+            "Spoken Content should be a short 1-3 sentence reply, supportive and on-topic, no lists or bullets. \n"
+            f"Recommended style to use: {target_style}."
+        )
+
+    def _call_llm(self, user_text: str, user_emotion: str, target_style: str) -> str:
+        messages = [
+            {"role": "system", "content": self._build_system_prompt(target_style)},
+            {
+                "role": "user",
+                "content": f"User Emotion: {user_emotion}\nUser Input: {user_text}",
+            },
+        ]
+        return self.llm_client.chat(messages)
+
+    @staticmethod
+    def parse_llm_output(llm_output: str) -> Tuple[str, str]:
+        """
+        Split "[Style] <endofprompt> [Content]" into (style, content).
+        The <endofprompt> tag is the anchor between CosyVoice instruct text and spoken text.
+        """
+        if not llm_output:
+            return "", ""
+
+        if "<endofprompt>" not in llm_output:
+            # If the delimiter is missing, treat everything as content to avoid failure.
+            return "", llm_output.strip()
+
+        style_part, content_part = llm_output.split("<endofprompt>", maxsplit=1)
+        style_text = style_part.strip()
+        # Remove outer brackets if present: [Style] -> Style.
+        if style_text.startswith("[") and style_text.endswith("]"):
+            style_text = style_text[1:-1].strip()
+
+        return style_text, content_part.strip()
+
+    def run_conversation(self, audio_path: str) -> Dict:
+        # 1) SenseVoice ASR + emotion.
+        sv_result = self.sense_voice.transcribe(audio_path)
+        user_text = sv_result.get("text", "")
+        user_emotion = sv_result.get("emotion", "neutral")
+
+        # 2) Map user emotion to an AI speaking persona (do not mirror negative affect).
+        target_style = self._map_user_emotion(user_emotion)
+
+        # 3) LLM generates both style string and spoken reply.
+        llm_output = self._call_llm(user_text=user_text, user_emotion=user_emotion, target_style=target_style)
+        style_text, content_text = self.parse_llm_output(llm_output)
+
+        # 4) CosyVoice TTS with instruct_text controlling prosody.
+        tts_result = self.cosy_voice.synthesize(text=content_text, instruct=style_text)
+
+        return {
+            "sensevoice_text": user_text,
+            "sensevoice_emotion": user_emotion,
+            "mapped_style": target_style,
+            "llm_raw": llm_output,
+            "instruct_text": style_text,
+            "content_text": content_text,
+            "tts_result": tts_result,
+        }
 
 # CosyVoice 库路径（从 core/ 往上走: core/ -> modules/ -> libs/cosyvoice/）
 COSYVOICE_LIB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'libs', 'cosyvoice')
@@ -168,6 +300,7 @@ class TTSModule:
 
                 try:
                     for segment in text_segments:
+                        # 强制不朗读提示词，避免输出中带 prompt
                         for output in self.model.inference_zero_shot(
                             tts_text=segment,
                             prompt_text=prompt_text,
@@ -175,7 +308,7 @@ class TTSModule:
                             zero_shot_spk_id=voice_clone_id,
                             stream=False,
                             speed=speed,
-                            play_prompt=self.play_prompt
+                            play_prompt=False
                         ):
                             if 'tts_speech' in output and output['tts_speech'] is not None:
                                 audio_outputs.append(output['tts_speech'])
@@ -200,14 +333,37 @@ class TTSModule:
                 logger.info(f"Synthesizing with speaker: {speaker}, text: {text[:50]}...")
 
                 for segment in text_segments:
-                    for output in self.model.inference_sft(
-                        tts_text=segment,
-                        spk_id=speaker,
-                        stream=False,
-                        speed=speed
-                    ):
-                        if 'tts_speech' in output and output['tts_speech'] is not None:
-                            audio_outputs.append(output['tts_speech'])
+                    try:
+                        # instruct 提示强约束语气；若失败则回退到普通合成
+                        if instruct:
+                            iterator = self.model.inference_instruct(
+                                tts_text=segment,
+                                spk_id=speaker,
+                                instruct_text=instruct,
+                                stream=False,
+                                speed=speed
+                            )
+                        else:
+                            iterator = self.model.inference_sft(
+                                tts_text=segment,
+                                spk_id=speaker,
+                                stream=False,
+                                speed=speed
+                            )
+
+                        for output in iterator:
+                            if 'tts_speech' in output and output['tts_speech'] is not None:
+                                audio_outputs.append(output['tts_speech'])
+                    except Exception as e:
+                        logger.warning(f"Instruct synthesis failed, falling back to sft: {e}")
+                        for output in self.model.inference_sft(
+                            tts_text=segment,
+                            spk_id=speaker,
+                            stream=False,
+                            speed=speed
+                        ):
+                            if 'tts_speech' in output and output['tts_speech'] is not None:
+                                audio_outputs.append(output['tts_speech'])
 
             if audio_outputs:
                 # 合并音频（audio_outputs 是 [1, T] 的列表，按时间维拼接）
@@ -319,8 +475,11 @@ class TTSModule:
         # 如果拆分失败，至少返回原文本
         return chunks or [text]
     
-    def synthesize_with_emotion(self, text: str, emotion: str, 
-                                output_path: str = None) -> Dict:
+    def synthesize_with_emotion(self, text: str, emotion: str,
+                                output_path: str = None,
+                                voice_clone_id: str = None,
+                                speaker: str = None,
+                                speed: float = 1.0) -> Dict:
         """
         根据情感合成语音
         
@@ -332,17 +491,30 @@ class TTSModule:
         Returns:
             合成结果
         """
-        # 情感到指令的映射
-        emotion_instructions = {
-            "happy": "用开心、愉快的语气说话",
-            "sad": "用温柔、安慰的语气说话",
-            "angry": "用平静、安抚的语气说话",
-            "fear": "用舒缓、镇定的语气说话",
-            "neutral": "用自然、清晰的语气说话",
-            "surprise": "用友好、亲切的语气说话"
+        # 情感到指令/语速的映射，尽量让听感差异明显
+        # 更明显的情感差异；neutral 不下发 instruct，避免提示词被朗读
+        emotion_profiles = {
+            "happy": {"instruct": "明亮愉快、语调偏高、语速稍快", "speed": 1.10},
+            "sad": {"instruct": "温柔安慰、语调偏低、语速放慢", "speed": 0.90},
+            "angry": {"instruct": "克制冷静、语调中低、语速略快", "speed": 1.05},
+            "fear": {"instruct": "镇定稳重、音量柔和、语速偏慢", "speed": 0.94},
+            "anxious": {"instruct": "安抚耐心、语调柔和、语速中等偏慢", "speed": 0.96},
+            "surprise": {"instruct": "轻快明亮、音调上扬、语速稍快", "speed": 1.08},
+            "neutral": {"instruct": None, "speed": 1.0},
         }
-        instruct = emotion_instructions.get(emotion, "用自然、清晰的语气说话")
-        return self.synthesize(text, output_path, instruct=instruct)
+
+        profile = emotion_profiles.get(emotion, {"instruct": None, "speed": speed})
+        instruct = profile.get("instruct")
+        # 优先使用情感配置的语速，否则沿用外部速度
+        speed = profile.get("speed", speed)
+        return self.synthesize(
+            text,
+            output_path=output_path,
+            instruct=instruct,
+            voice_clone_id=voice_clone_id,
+            speaker=speaker,
+            speed=speed
+        )
     
     def list_speakers(self):
         """列出可用的说话人"""
@@ -681,7 +853,8 @@ class SimpleTTSModule:
             traceback.print_exc()
             return {"audio": None, "sample_rate": 0, "output_path": None, "text": text, "error": str(e)}
     
-    def synthesize_with_emotion(self, text: str, emotion: str, output_path: str = None) -> Dict:
+    def synthesize_with_emotion(self, text: str, emotion: str, output_path: str = None, **kwargs) -> Dict:
+        # 简化版只透传
         return self.synthesize(text, output_path)
     
     def get_model_info(self) -> Dict:
