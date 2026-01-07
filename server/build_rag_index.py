@@ -50,7 +50,28 @@ def build_rag_index(
     
     # 1. 加载 Embedding 模型
     logger.info(f"加载 Embedding 模型: {embedding_model}")
-    model = SentenceTransformer(embedding_model, device=device)
+    
+    # 优先使用 ModelScope 下载模型（适用于 BAAI/bge 模型）
+    if 'BAAI' in embedding_model or 'bge' in embedding_model.lower():
+        try:
+            from modelscope import snapshot_download
+            # 从 ModelScope 下载 bge 模型
+            models_dir = Path(__file__).parent.parent / "models" / "embedding"
+            models_dir.mkdir(parents=True, exist_ok=True)
+            ms_model_name = "AI-ModelScope/bge-small-zh-v1.5"
+            logger.info(f"从 ModelScope 下载模型: {ms_model_name}")
+            model_path = snapshot_download(ms_model_name, cache_dir=str(models_dir))
+            logger.info(f"模型已下载到: {model_path}")
+            model = SentenceTransformer(model_path, device=device)
+        except ImportError:
+            logger.warning("ModelScope 不可用，回退到 HuggingFace")
+            model = SentenceTransformer(embedding_model, device=device)
+        except Exception as e:
+            logger.warning(f"ModelScope 下载失败: {e}，回退到 HuggingFace")
+            model = SentenceTransformer(embedding_model, device=device)
+    else:
+        model = SentenceTransformer(embedding_model, device=device)
+    
     embedding_dim = model.get_sentence_embedding_dimension()
     logger.info(f"Embedding 维度: {embedding_dim}")
     
