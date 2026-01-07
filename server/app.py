@@ -1439,8 +1439,11 @@ def chat_endpoint():
         # 准备响应头信息
         from urllib.parse import quote
         
-        # 检查是否支持流式 TTS
-        if hasattr(tts_module, 'synthesize_stream'):
+        # 读取配置决定是否使用流式 TTS
+        use_streaming_tts = config.get('tts', {}).get('streaming', True)
+        
+        # 检查是否支持流式 TTS 且配置启用
+        if use_streaming_tts and hasattr(tts_module, 'synthesize_stream'):
             # 使用流式 TTS（支持音色克隆需要使用 synthesize_stream_with_clone）
             def generate_stream():
                 """生成器函数，逐块返回音频数据"""
