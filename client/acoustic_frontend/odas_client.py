@@ -376,7 +376,7 @@ class ODASClient:
             sources = list(self._tracked_sources.values())
         
         if active_only:
-            sources = [s for s in sources if s.activity > 0.5]
+            sources = [s for s in sources if s.activity > 0.1]
         
         return sorted(sources, key=lambda s: s.energy, reverse=True)
     
