@@ -208,21 +208,37 @@ class ODASClient:
         logger.info("ODASClient stopped")
     
     def _sst_receiver(self):
-        """SST (跟踪) 数据接收线程"""
+        """SST (跟踪) 数据接收线程 - 充当 TCP 服务器等待 ODAS 连接"""
+        # 创建服务器 Socket
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        
+        try:
+            server_socket.bind((self.sst_host, self.sst_port))
+            server_socket.listen(1)
+            server_socket.settimeout(1.0)
+            logger.info(f"ODAS SST Server listening on {self.sst_host}:{self.sst_port}")
+        except Exception as e:
+            logger.error(f"Failed to bind SST server to {self.sst_host}:{self.sst_port}: {e}")
+            return
+
         while self._running:
             try:
-                # 连接
-                self._sst_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self._sst_socket.connect((self.sst_host, self.sst_port))
+                # 等待 ODAS 连接
+                try:
+                    self._sst_socket, addr = server_socket.accept()
+                    logger.info(f"ODAS SST connected from {addr}")
+                except socket.timeout:
+                    continue
+                
                 self._sst_socket.settimeout(1.0)
-                
-                logger.info(f"Connected to ODAS SST: {self.sst_host}:{self.sst_port}")
-                
                 buffer = ""
+                
                 while self._running:
                     try:
                         data = self._sst_socket.recv(4096).decode('utf-8')
                         if not data:
+                            logger.warning("ODAS SST connection closed by peer")
                             break
                         
                         buffer += data
@@ -239,13 +255,19 @@ class ODASClient:
                     except Exception as e:
                         logger.error(f"SST receive error: {e}")
                         break
-                        
-            except ConnectionRefusedError:
-                logger.warning(f"ODAS SST not available at {self.sst_host}:{self.sst_port}, retrying...")
-                time.sleep(2)
+                
+                # 关闭当前连接，准备接受下一个
+                if self._sst_socket:
+                    self._sst_socket.close()
+                    self._sst_socket = None
+                    
             except Exception as e:
-                logger.error(f"SST connection error: {e}")
-                time.sleep(2)
+                if self._running:
+                    logger.error(f"SST server error: {e}")
+                    time.sleep(1)
+        
+        server_socket.close()
+        logger.info("ODAS SST Server stopped")
     
     def _parse_sst_json(self, json_str: str):
         """解析 SST JSON 数据"""

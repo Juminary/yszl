@@ -126,11 +126,16 @@ start_odas() {
     
     if ps -p $(cat "$PID_FILE") > /dev/null 2>&1; then
         log_info "ODAS started with PID $(cat $PID_FILE)"
-        log_info "SST output: tcp://127.0.0.1:9000"
+        log_info "SST output: tcp://127.0.0.1:9000 (Waiting for Python client to listen)"
         log_info "SSS output: tcp://127.0.0.1:9001"
         log_info "Log file: /tmp/odas.log"
     else
         log_error "ODAS failed to start. Check /tmp/odas.log"
+        # 尝试显示最后几行日志帮助诊断
+        if [ -f /tmp/odas.log ]; then
+            log_error "Last lines of /tmp/odas.log:"
+            tail -n 5 /tmp/odas.log
+        fi
         exit 1
     fi
 }
