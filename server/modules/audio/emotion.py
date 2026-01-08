@@ -135,23 +135,12 @@ class EmotionModule:
                 # 提取韵律特征
                 prosody = self._extract_prosody(audio_path, audio_array, sample_rate)
 
-                # 文本语义启发：明显的"开心/不开心/生气"词汇覆盖模型输出（高优先级）
-                # 优先使用文本语义，因为文本内容比语音语调更可靠
+                # 文本语义启发：明显的“开心/不开心/生气”词汇覆盖一档
                 text_heur = self._heuristic_emotion_from_text(text_result)
                 if text_heur:
                     emotion = text_heur["emotion"]
                     confidence = text_heur["confidence"]
-                    logger.debug(f"[Emotion] 文本关键词覆盖模型输出: {emotion} (原模型输出可能是其他)")
                 else:
-                    # 如果模型输出是 happy，但文本中有明显的负面词汇，也要检查
-                    # 防止模型误判（比如"感冒又加重了"被误判为 happy）
-                    if emotion == "happy":
-                        # 二次检查：是否有负面词汇但没匹配到关键词
-                        negative_indicators = ["感冒", "发烧", "疼", "痛", "加重", "恶化", "不好", "怎么办", "担心"]
-                        if any(indicator in text_result.lower() for indicator in negative_indicators):
-                            emotion = "sad"
-                            confidence = 0.7
-                            logger.debug(f"[Emotion] 检测到负面词汇但模型输出happy，强制覆盖为sad")
                     confidence = 0.85 if emotion != "neutral" else 0.5
 
                 # 基于韵律的辅助判别：若模型输出为neutral且韵律特征明显偏低/高，做轻微偏移
@@ -276,34 +265,23 @@ class EmotionModule:
             return {}
 
     def _heuristic_emotion_from_text(self, text: str) -> Dict:
-        """基于中文情感关键词的简单覆盖，优先解决明显的"不开心/生气/难过"等情况。"""
+        """基于中文情感关键词的简单覆盖，优先解决明显的“不开心/生气/难过”等情况。"""
         try:
             t = (text or "").lower()
-            
-            # 优先检测负面情绪（疾病、症状、担忧等）
-            # 疾病/症状相关（高优先级，因为这些通常不是开心的事）
-            illness_keys = ["感冒", "发烧", "发热", "头疼", "头痛", "咳嗽", "拉肚子", "腹泻", "恶心", "呕吐", 
-                          "不舒服", "难受", "疼", "痛", "加重", "恶化", "更严重", "不好", "糟糕", "严重",
-                          "生病", "病了", "症状", "病情", "怎么办", "担心", "害怕", "焦虑", "紧张"]
-            if any(k in t for k in illness_keys):
-                return {"emotion": "sad", "confidence": 0.75, "probabilities": {"sad": 0.75, "neutral": 0.2, "anxious": 0.05}}
-            
             # 悲伤/不开心
-            sad_keys = ["不开心", "难过", "伤心", "沮丧", "低落", "压抑", "烦", "心情不好", "不高兴", 
-                       "郁闷", "失落", "失望", "痛苦", "难受", "不舒服"]
+            sad_keys = ["不开心", "难过", "伤心", "沮丧", "低落", "压抑", "烦", "心情不好", "不高兴"]
             if any(k in t for k in sad_keys):
                 return {"emotion": "sad", "confidence": 0.7, "probabilities": {"sad": 0.7, "neutral": 0.3}}
 
+            # 开心
+            happy_keys = ["开心", "高兴", "愉快", "不错", "好开心", "很爽"]
+            if any(k in t for k in happy_keys):
+                return {"emotion": "happy", "confidence": 0.7, "probabilities": {"happy": 0.7, "neutral": 0.3}}
+
             # 生气/烦躁
-            angry_keys = ["生气", "火大", "气死", "很烦", "恼火", "愤怒", "气愤"]
+            angry_keys = ["生气", "火大", "气死", "很烦", "恼火"]
             if any(k in t for k in angry_keys):
                 return {"emotion": "angry", "confidence": 0.65, "probabilities": {"angry": 0.65, "neutral": 0.35}}
-
-            # 开心（放在最后，避免误判）
-            happy_keys = ["开心", "高兴", "愉快", "好开心", "很爽", "太好了", "真不错", "很棒"]
-            # 注意：如果同时包含负面和正面词汇，优先负面
-            if any(k in t for k in happy_keys) and not any(k in t for k in illness_keys + sad_keys + angry_keys):
-                return {"emotion": "happy", "confidence": 0.7, "probabilities": {"happy": 0.7, "neutral": 0.3}}
 
             return {}
         except Exception as e:
