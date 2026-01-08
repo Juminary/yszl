@@ -182,6 +182,34 @@ class DialogueModule:
         # 去除开头的标点
         text = re.sub(r'^[，。,\.]+', '', text)
         
+        # 移除英文提示词（只移除明显的提示词，不误删正常内容）
+        # 常见的提示词关键词（通常在文本开头或独立出现）
+        prompt_keywords = [
+            r'\bendofprompt\b',  # <endofprompt> 标签
+            r'<endofprompt>',     # 完整标签
+            r'\bstyle\b',         # style 关键词
+            r'\bcontent\b',       # content 关键词
+            r'\bemotion\b',       # emotion 关键词
+            r'\[style\]',         # [style] 标签
+            r'\[content\]',       # [content] 标签
+        ]
+        for pattern in prompt_keywords:
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+        
+        # 移除文本开头或结尾的英文单词（可能是残留的提示词）
+        # 只移除独立的英文单词，不误删中文中的字母
+        text = re.sub(r'^[a-zA-Z]+\s+', '', text)  # 开头的英文单词
+        text = re.sub(r'\s+[a-zA-Z]+$', '', text)  # 结尾的英文单词
+        
+        # 移除可能残留的风格描述（如果开头包含风格关键词且较短）
+        style_keywords = ["语气", "语速", "语调", "音量", "音调", "节奏", "温暖", "柔和", "明亮", "轻快", "安慰", "耐心", "稍快", "稍慢", "偏快", "偏慢"]
+        lines = text.split('\n')
+        if len(lines) > 0:
+            first_line = lines[0].strip()
+            # 如果第一行包含风格关键词且较短（可能是残留的风格描述），移除它
+            if any(kw in first_line for kw in style_keywords) and len(first_line) <= 30:
+                text = '\n'.join(lines[1:]).strip() if len(lines) > 1 else ""
+        
         return text.strip()
     
     def chat(self, query: str, session_id: str = "default", 
@@ -309,6 +337,18 @@ class DialogueModule:
                     style = self.emotion_strategy.get_style_for_emotion(emotion)
                     logger.info(f"[Emotional Mode] LLM 未输出风格，使用默认: {style}")
                 
+                # 额外检查：确保content不包含风格描述关键词（防止解析失败时残留）
+                if content:
+                    style_keywords = ["语气", "语速", "语调", "音量", "音调", "节奏", "温暖", "柔和", "明亮", "轻快", "安慰", "耐心"]
+                    # 如果content开头包含风格关键词，可能是解析失败，尝试移除
+                    content_lines = content.split('\n')
+                    if len(content_lines) > 0:
+                        first_line = content_lines[0].strip()
+                        # 如果第一行包含风格关键词且较短，可能是残留的风格描述
+                        if any(kw in first_line for kw in style_keywords) and len(first_line) <= 30:
+                            logger.warning(f"[Emotional Mode] 检测到content开头可能包含风格描述，已移除: {first_line}")
+                            content = '\n'.join(content_lines[1:]).strip() if len(content_lines) > 1 else ""
+                
                 logger.info(f"[Emotional Mode] 风格: {style}")
                 logger.info(f"[Emotional Mode] 内容: {content[:50]}...")
             
@@ -332,9 +372,8 @@ class DialogueModule:
                 result["style"] = style
                 result["content"] = content.strip()
                 result["emotional_mode"] = True
-                # 获取 CosyVoice instruct 文本
-                if self.emotion_strategy and emotion:
-                    result["tts_instruct"] = self.emotion_strategy.get_instruct_for_emotion(emotion)
+                # 不使用 instruct 模式（避免 instruct 文本被读出），只传递 emotion 用于语速调整
+                result["emotion"] = emotion
             
             return result
             

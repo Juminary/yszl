@@ -815,10 +815,14 @@ def dialogue_endpoint():
 请简洁回应确认你正在记录，不需要提供医疗建议。
 回复简短即可，如"好的，已记录"或"继续"。""",
 
-            'caregiver': """你是一个专业的陪护指导助手，帮助家属和护工照顾患者。
-你的职责是，提供日常护理建议，解答照护困惑，在陪护者情绪低落时给予支持和鼓励。
-你应该用温暖、耐心的语气回应，就像一位经验丰富的护士在旁指导。
-你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求，
+            'caregiver': """你是一个温暖贴心的陪护助手，像朋友一样陪伴用户聊天，关注他们的情绪和需求。
+你的核心原则：
+一，先共情，准确理解用户的情绪状态，不要误判。如果用户说不开心，你要先表达理解和安慰，而不是直接讲开心的事。
+二，语气自然亲切，像朋友聊天一样，用口语化表达，比如"嗯嗯我听着呢""别担心慢慢说""辛苦啦""好的呢"，但不要重复使用。
+三，根据用户情绪调整语气：用户难过时温柔安慰，用户开心时轻松愉快，用户焦虑时耐心安抚。
+四，回答要简洁自然，像真人对话，避免官方套话。比如用户要听开心的事，不要说"当然可以，生活总是充满欢笑"，而是直接分享一个具体的小故事或话题。
+五，可以聊日常话题、分享小故事、给予鼓励，也可以提供简单的护理建议，但不要过于专业和严肃。
+你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求：
 只用纯中文回答，禁止英文和数字。
 只用中文逗号和句号，禁止其他标点。
 禁止使用列表和编号格式，必须写成连贯的一段话。
@@ -1424,10 +1428,14 @@ def chat_endpoint():
 请简洁回应确认你正在记录，不需要提供医疗建议。
 回复简短即可，如"好的，已记录"或"继续"。""",
 
-            'caregiver': """你是一个专业的陪护指导助手，帮助家属和护工照顾患者。
-你的职责是，提供日常护理建议，解答照护困惑，在陪护者情绪低落时给予支持和鼓励。
-你应该用温暖、耐心的语气回应，就像一位经验丰富的护士在旁指导。
-你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求，
+            'caregiver': """你是一个温暖贴心的陪护助手，像朋友一样陪伴用户聊天，关注他们的情绪和需求。
+你的核心原则：
+一，先共情，准确理解用户的情绪状态，不要误判。如果用户说不开心，你要先表达理解和安慰，而不是直接讲开心的事。
+二，语气自然亲切，像朋友聊天一样，用口语化表达，比如"嗯嗯我听着呢""别担心慢慢说""辛苦啦""好的呢"，但不要重复使用。
+三，根据用户情绪调整语气：用户难过时温柔安慰，用户开心时轻松愉快，用户焦虑时耐心安抚。
+四，回答要简洁自然，像真人对话，避免官方套话。比如用户要听开心的事，不要说"当然可以，生活总是充满欢笑"，而是直接分享一个具体的小故事或话题。
+五，可以聊日常话题、分享小故事、给予鼓励，也可以提供简单的护理建议，但不要过于专业和严肃。
+你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求：
 只用纯中文回答，禁止英文和数字。
 只用中文逗号和句号，禁止其他标点。
 禁止使用列表和编号格式，必须写成连贯的一段话。
@@ -1607,15 +1615,16 @@ def chat_endpoint():
         # 准备响应头信息
         from urllib.parse import quote
         
-        # 提取情感感知模式的 TTS 指令（用于 CosyVoice instruct 模式）
-        tts_instruct = None
+        # 情感感知模式：不使用 instruct 模式，改用 SFT 模式配合语速调整
         if dialogue_result and dialogue_result.get('emotional_mode'):
-            tts_instruct = dialogue_result.get('tts_instruct')
             style = dialogue_result.get('style', '')
-            if tts_instruct:
-                logger.info(f"[Emotional TTS] 使用情感风格指令: {tts_instruct}")
+            emotion_from_dialogue = dialogue_result.get('emotion')
+            if emotion_from_dialogue:
+                emotion_label = emotion_from_dialogue  # 使用对话结果中的 emotion
             if style:
                 logger.info(f"[Emotional TTS] LLM 生成的风格描述: {style}")
+            if emotion_label:
+                logger.info(f"[Emotional TTS] 使用情感感知模式，情感: {emotion_label}，通过语速调整体现")
         
         # 读取配置决定是否使用流式 TTS
         use_streaming_tts = config.get('tts', {}).get('streaming', True)
@@ -1641,7 +1650,7 @@ def chat_endpoint():
                             result = tts_module.synthesize(
                                 text=response_text, 
                                 voice_clone_id=voice_clone_id,
-                                instruct=tts_instruct  # 情感感知 TTS 指令
+                                instruct=None  # 不使用 instruct 模式
                             )
                         if result.get('output_path') and os.path.exists(result['output_path']):
                             with open(result['output_path'], 'rb') as f:
@@ -1651,8 +1660,14 @@ def chat_endpoint():
                                         break
                                     yield chunk
                     else:
-                        # 无音色克隆：使用真正的流式合成
-                        for chunk in tts_module.synthesize_stream(response_text, None, 1.0):
+                        # 无音色克隆：使用真正的流式合成（传递情感信息）
+                        for chunk in tts_module.synthesize_stream(
+                            response_text, 
+                            None,  # speaker
+                            1.0,   # speed (会被情感配置覆盖)
+                            emotion=emotion_label,  # 传递用户情感，用于语速调整
+                            instruct=None  # 不使用 instruct 模式
+                        ):
                             yield chunk
                 except Exception as e:
                     logger.error(f"[Streaming TTS] Error: {e}")
@@ -1696,7 +1711,8 @@ def chat_endpoint():
             else:
                 tts_result = tts_module.synthesize(
                     text=response_text,
-                    voice_clone_id=voice_clone_id
+                    voice_clone_id=voice_clone_id,
+                    instruct=None  # 不使用 instruct 模式
                 )
             
             # 如果有音频文件，返回音频

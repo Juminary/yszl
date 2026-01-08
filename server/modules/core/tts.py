@@ -980,44 +980,33 @@ class TTSModule:
         Returns:
             合成结果
         """
-        # 情感到指令/语速的映射，突出听感差异并加入口语化亲近感
-        # neutral 不下发 instruct，避免不必要的提示
-        emotion_profiles = {
-            "happy": {
-                "instruct": "语气明亮愉快，语调稍高，语速稍快，偶尔加好的呢、太好了、真不错等亲切口头语",
-                "speed": 1.10
-            },
-            "sad": {
-                "instruct": "语气柔软安慰，音量放轻，语速放慢，时不时说嗯嗯、别着急、我在听，传递陪伴",
-                "speed": 0.90
-            },
-            "angry": {
-                "instruct": "语气克制冷静，语调中低，语速略快但不强硬，用理解的口吻如我明白、先别急",
-                "speed": 1.05
-            },
-            "fear": {
-                "instruct": "语气镇定稳重，音量柔和，语速偏慢，用安抚词如别担心、我陪着你",
-                "speed": 0.94
-            },
-            "anxious": {
-                "instruct": "语气安抚耐心，语调柔和，语速中等偏慢，加入慢慢来、先深呼吸这类口头安慰",
-                "speed": 0.96
-            },
-            "surprise": {
-                "instruct": "语气轻快明亮，音调上扬，语速稍快，带一点惊喜感如哇、真不错",
-                "speed": 1.08
-            },
-            "neutral": {"instruct": None, "speed": 1.0},
+        # 情感到语速的映射（不使用 instruct 模式，避免 instruct 文本被读出）
+        emotion_speed_profiles = {
+            "happy": 1.10,
+            "sad": 0.90,
+            "angry": 1.05,
+            "fear": 0.94,
+            "anxious": 0.96,
+            "surprise": 1.08,
+            "neutral": 1.0,
+            "depressed": 0.88,
+            "pain": 0.92,
+            "confused": 0.98,
+            "grateful": 1.05,
+            "frustrated": 1.02,
+            "tired": 0.90,
         }
-
-        profile = emotion_profiles.get(emotion, {"instruct": None, "speed": speed})
-        instruct = profile.get("instruct")
-        # 优先使用情感配置的语速，否则沿用外部速度
-        speed = profile.get("speed", speed)
+        
+        # 根据情感调整语速
+        emotion_speed = emotion_speed_profiles.get(emotion, speed)
+        if emotion_speed != speed:
+            speed = emotion_speed
+            logger.info(f"[TTS] 根据情感 {emotion} 调整语速为 {speed}")
+        
         return self.synthesize(
             text,
             output_path=output_path,
-            instruct=instruct,
+            instruct=None,  # 不使用 instruct 模式
             voice_clone_id=voice_clone_id,
             speaker=speaker,
             speed=speed
@@ -1212,7 +1201,8 @@ class TTSModule:
             ]
         }
     
-    def synthesize_stream(self, text: str, speaker: str = None, speed: float = 1.0):
+    def synthesize_stream(self, text: str, speaker: str = None, speed: float = 1.0, 
+                         emotion: str = None, instruct: str = None):
         """
         流式语音合成 - 边生成边返回音频块
         
@@ -1220,6 +1210,8 @@ class TTSModule:
             text: 要合成的文本
             speaker: 说话人ID
             speed: 语速
+            emotion: 情感 (happy, sad, etc.)，用于自动生成 instruct
+            instruct: 指令文本，用于控制语音风格（如果提供，优先使用）
             
         Yields:
             bytes: WAV 格式音频数据块
@@ -1235,18 +1227,80 @@ class TTSModule:
             if speaker is None and self.available_spks:
                 speaker = self.available_spks[0]
             
-            logger.info(f"[Streaming TTS] Starting with speaker: {speaker}, text: {text[:50]}...")
+            # 如果提供了 emotion，只调整语速，不使用 instruct 模式（避免 instruct 文本被读出）
+            if emotion and not instruct:
+                emotion_speed_profiles = {
+                    "happy": 1.10,
+                    "sad": 0.90,
+                    "angry": 1.05,
+                    "fear": 0.94,
+                    "anxious": 0.96,
+                    "surprise": 1.08,
+                    "neutral": 1.0,
+                    "depressed": 0.88,
+                    "pain": 0.92,
+                    "confused": 0.98,
+                    "grateful": 1.05,
+                    "frustrated": 1.02,
+                    "tired": 0.90,
+                }
+                emotion_speed = emotion_speed_profiles.get(emotion, speed)
+                if emotion_speed != speed:
+                    speed = emotion_speed
+                    logger.info(f"[Streaming TTS] 根据情感 {emotion} 调整语速为 {speed}")
+            
+            logger.info(f"[Streaming TTS] Starting with speaker: {speaker}, emotion: {emotion}, instruct: {instruct[:50] if instruct else None}..., text: {text[:50]}...")
             
             # 先发送 WAV 头部（占位，稍后更新）
             # 使用流式模式时，我们无法预知总长度，所以用 chunked transfer
             first_chunk = True
             
-            for output in self.model.inference_sft(
-                tts_text=text,
-                spk_id=speaker,
-                stream=True,  # 启用流式
-                speed=speed
-            ):
+            # 如果有 instruct，尝试使用 inference_instruct（如果支持流式）
+            # 否则使用 inference_sft，但至少调整语速来体现情感
+            if instruct:
+                # 检查是否有 inference_instruct 方法
+                if hasattr(self.model, 'inference_instruct'):
+                    try:
+                        # 尝试使用 instruct 模式（流式）
+                        inference_method = self.model.inference_instruct
+                        inference_kwargs = {
+                            "tts_text": text,
+                            "spk_id": speaker,
+                            "instruct_text": instruct,
+                            "stream": True,
+                            "speed": speed
+                        }
+                        logger.info(f"[Streaming TTS] Using inference_instruct with emotion-aware style: {instruct[:50]}...")
+                    except Exception as e:
+                        # 如果 inference_instruct 不支持流式或其他错误，回退到 inference_sft
+                        logger.warning(f"[Streaming TTS] inference_instruct failed (may not support streaming), using inference_sft with adjusted speed: {e}")
+                        inference_method = self.model.inference_sft
+                        inference_kwargs = {
+                            "tts_text": text,
+                            "spk_id": speaker,
+                            "stream": True,
+                            "speed": speed  # 至少调整语速来体现情感
+                        }
+                else:
+                    # 如果没有 inference_instruct 方法，使用 inference_sft，但至少调整语速
+                    logger.info(f"[Streaming TTS] inference_instruct not available, using inference_sft with emotion-adjusted speed: {speed}")
+                    inference_method = self.model.inference_sft
+                    inference_kwargs = {
+                        "tts_text": text,
+                        "spk_id": speaker,
+                        "stream": True,
+                        "speed": speed  # 至少调整语速来体现情感
+                    }
+            else:
+                inference_method = self.model.inference_sft
+                inference_kwargs = {
+                    "tts_text": text,
+                    "spk_id": speaker,
+                    "stream": True,
+                    "speed": speed
+                }
+            
+            for output in inference_method(**inference_kwargs):
                 audio_tensor = output['tts_speech']
                 
                 # 转换为 16-bit PCM
