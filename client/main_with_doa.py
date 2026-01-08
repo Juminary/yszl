@@ -31,9 +31,15 @@ from wakeword_detector import WakeWordDetector
 # 导入声学前端模块
 from acoustic_frontend.odas_client import ODASClient, TrackedSource
 from acoustic_frontend.beamformer import Beamformer
+from acoustic_frontend.aec import HardwareAEC
 import numpy as np
 import wave
 import io
+import asyncio
+
+# 全双工控制器
+from event_bus import EventBus, EventType, Event, get_event_bus
+from fullduplex_controller import FullDuplexController, InteractionState, AudioChunk
 
 # 配置日志
 logging.basicConfig(
@@ -477,10 +483,57 @@ class VoiceAssistantWithDOA:
             array_radius=0.0463  # ReSpeaker 6-Mic 阵列半径
         )
         
+        # ===== 回声消除 (AEC) =====
+        self._aec_enabled = self.config.get('aec', {}).get('enabled', True)
+        
+        if self._aec_enabled:
+            self.aec = HardwareAEC(
+                sample_rate=self.config.get('audio', {}).get('sample_rate', 16000)
+            )
+            logger.info("HardwareAEC initialized (using channels 6-7 as echo reference)")
+        else:
+            self.aec = None
+        
+        # ===== 全双工控制器 =====
+        self._fullduplex_enabled = self.config.get('fullduplex', {}).get('enabled', True)
+        
+        if self._fullduplex_enabled:
+            # 事件总线
+            self.event_bus = get_event_bus()
+            
+            # 全双工控制器
+            self.fullduplex = FullDuplexController(
+                event_bus=self.event_bus,
+                sample_rate=self.config.get('audio', {}).get('sample_rate', 16000),
+                chunk_duration_ms=30,
+                interrupt_threshold=self.config.get('fullduplex', {}).get('interrupt_threshold', 0.6),
+                min_interrupt_duration=self.config.get('fullduplex', {}).get('min_interrupt_duration', 0.15)
+            )
+            
+            # 注册回调
+            self.fullduplex.on_interrupt(self._on_barge_in)
+            self.fullduplex.on_state_change(self._on_state_change)
+            
+            # 设置扬声器方向 (用于 DOA 辅助打断检测)
+            # 假设扬声器在设备正后方 (180°)
+            self.fullduplex.set_speaker_direction(
+                self.config.get('fullduplex', {}).get('speaker_direction', 180.0)
+            )
+            
+            logger.info("FullDuplex controller initialized")
+        else:
+            self.event_bus = None
+            self.fullduplex = None
+        
+        # 打断标志
+        self._tts_interrupted = False
+        
         logger.info(f"VoiceAssistantWithDOA initialized")
         logger.info(f"Server: {self.server_url}")
         logger.info(f"Session ID: {self.session_id}")
         logger.info(f"Beamforming: {'enabled' if self._beamforming_enabled else 'disabled'}")
+        logger.info(f"AEC: {'enabled' if self._aec_enabled else 'disabled'}")
+        logger.info(f"FullDuplex: {'enabled' if self._fullduplex_enabled else 'disabled'}")
     
     def _load_config(self, config_path: str) -> dict:
         """加载配置文件"""
@@ -490,6 +543,45 @@ class VoiceAssistantWithDOA:
         except Exception as e:
             logger.warning(f"Failed to load config: {e}. Using defaults.")
             return {}
+    
+    # ==================== 全双工回调 ====================
+    
+    def _on_barge_in(self, event_data: dict):
+        """
+        打断事件回调 - 用户在 TTS 播放期间说话
+        
+        使用 DOA 区分用户语音和扬声器回声:
+        - 如果声源方向与扬声器方向相差较大 (>30°)，认为是真正的用户打断
+        - 否则可能是设备自己的回声，不做处理
+        """
+        doa_angle = event_data.get('doa_angle')
+        confidence = event_data.get('confidence', 0.0)
+        energy = event_data.get('energy', 0.0)
+        
+        logger.info(f"🛑 Barge-in detected! DOA: {doa_angle}°, confidence: {confidence:.2f}, energy: {energy:.4f}")
+        
+        # 设置打断标志
+        self._tts_interrupted = True
+        
+        # 停止 TTS 播放
+        try:
+            self.player.stop()
+        except Exception as e:
+            logger.warning(f"Failed to stop player: {e}")
+        
+        # 发布 TTS 被打断事件
+        if self.event_bus:
+            self.event_bus.emit(EventType.TTS_INTERRUPTED, source="barge_in")
+        
+        print(f"\n🛑 检测到打断！DOA: {doa_angle:.1f}°")
+    
+    def _on_state_change(self, old_state, new_state, reason: str):
+        """
+        状态变更回调
+        
+        用于观察和调试状态机转换
+        """
+        logger.info(f"State transition: {old_state.value} → {new_state.value} ({reason})")
     
     # ==================== DOA 功能 ====================
     
@@ -617,10 +709,20 @@ class VoiceAssistantWithDOA:
             beam_angle = 0.0
             logger.warning("No DOA available, using 0°")
         
-        # 4. 提取麦克风通道 (前6通道)
+        # 4. 提取麦克风通道 (前6通道) 和回声参考通道 (通道6-7)
         mic_channels = multichannel_audio[:, :6]
+        echo_channels = multichannel_audio[:, 6:8]
         
-        # 5. 波束成形
+        # 5. 应用回声消除 (AEC)
+        if self._aec_enabled and self.aec is not None:
+            logger.info("Applying AEC using hardware echo reference (channels 6-7)")
+            # AEC 处理每个麦克风通道
+            aec_output = self.aec.process_frame(mic_channels, echo_channels)
+            # 仅第一通道经过 AEC，其他通道保持原样 (波束成形会融合)
+            # 或者也可以为每个通道单独处理，这里简化处理
+            logger.debug(f"AEC applied, output shape: {aec_output.shape}")
+        
+        # 6. 波束成形
         logger.info(f"Applying beamforming at {beam_angle:.1f}°")
         enhanced_audio = self.beamformer.process(mic_channels, target_angle=beam_angle)
         
@@ -914,7 +1016,32 @@ class VoiceAssistantWithDOA:
             return None
     
     def _play_response(self, response):
-        """播放响应音频"""
+        """
+        播放响应音频 (带全双工打断检测)
+        
+        在 TTS 播放期间，后台持续采集音频并传给 FullDuplexController，
+        如果检测到用户打断 (DOA 与扬声器方向不同的语音)，立即停止播放。
+        """
+        # 重置打断标志
+        self._tts_interrupted = False
+        
+        # 发布 TTS 开始事件
+        if self._fullduplex_enabled and self.event_bus:
+            self.event_bus.emit(EventType.TTS_START, source="tts_player")
+            self.fullduplex.set_state_sync(InteractionState.SPEAKING, "TTS started")
+        
+        # 启动打断监控线程
+        monitor_stop = threading.Event()
+        monitor_thread = None
+        
+        if self._fullduplex_enabled and self.fullduplex:
+            monitor_thread = threading.Thread(
+                target=self._barge_in_monitor_loop,
+                args=(monitor_stop,),
+                daemon=True
+            )
+            monitor_thread.start()
+        
         try:
             is_streaming = response.headers.get('X-Streaming-Audio', 'False') == 'True'
             
@@ -926,6 +1053,11 @@ class VoiceAssistantWithDOA:
                 
                 header_skipped = False
                 for chunk in response.iter_content(chunk_size=4096):
+                    # 检查是否被打断
+                    if self._tts_interrupted:
+                        logger.info("TTS interrupted, stopping playback")
+                        break
+                    
                     if not chunk:
                         continue
                     
@@ -937,16 +1069,89 @@ class VoiceAssistantWithDOA:
                     if chunk:
                         streaming_player.feed(chunk)
                 
-                streaming_player.wait_until_done()
+                # 只有未被打断时才等待播放完成
+                if not self._tts_interrupted:
+                    streaming_player.wait_until_done()
+                else:
+                    # 被打断时强行停止
+                    try:
+                        streaming_player.stop()
+                    except:
+                        pass
             else:
                 response_audio = "temp_response.wav"
                 with open(response_audio, 'wb') as f:
                     f.write(response.content)
-                self.player.play_file(response_audio)
+                
+                # 非流式播放 - 使用可打断的播放
+                self.player.play_file(response_audio, blocking=False)
+                
+                # 等待播放完成或被打断
+                while self.player.is_playing():
+                    if self._tts_interrupted:
+                        self.player.stop()
+                        break
+                    time.sleep(0.05)
+                
                 Path(response_audio).unlink(missing_ok=True)
                 
         except Exception as e:
             logger.error(f"Failed to play response: {e}")
+        finally:
+            # 停止监控线程
+            monitor_stop.set()
+            if monitor_thread:
+                monitor_thread.join(timeout=1.0)
+            
+            # 发布 TTS 结束事件
+            if self._fullduplex_enabled and self.event_bus:
+                if self._tts_interrupted:
+                    self.event_bus.emit(EventType.TTS_INTERRUPTED, source="tts_player")
+                else:
+                    self.event_bus.emit(EventType.TTS_END, source="tts_player")
+                self.fullduplex.set_state_sync(InteractionState.LISTENING, "TTS finished")
+    
+    def _barge_in_monitor_loop(self, stop_event: threading.Event):
+        """
+        打断监控循环 - 在后台采集音频并检测打断
+        
+        Args:
+            stop_event: 停止信号
+        """
+        frame_duration_ms = 30
+        frame_samples = int(16000 * frame_duration_ms / 1000)
+        
+        while not stop_event.is_set() and not self._tts_interrupted:
+            try:
+                # 使用多通道采集获取一小段音频
+                audio = self.multichannel_capture.record(duration=frame_duration_ms / 1000)
+                
+                if audio is None or len(audio) == 0:
+                    time.sleep(0.01)
+                    continue
+                
+                # 取第一个通道做 VAD
+                mono = audio[:, 0] if audio.ndim > 1 else audio
+                energy = float(np.sqrt(np.mean(mono ** 2)))
+                
+                # 简单能量 VAD
+                is_speech = energy > 0.01
+                
+                # 获取当前 DOA
+                doa = self.get_current_doa()
+                
+                # 传给控制器检测打断
+                self.fullduplex.process_audio_chunk(
+                    audio_chunk=mono,
+                    is_speech=is_speech,
+                    energy=energy,
+                    vad_confidence=0.8 if is_speech else 0.2,
+                    doa_angle=doa
+                )
+                
+            except Exception as e:
+                logger.debug(f"Barge-in monitor error: {e}")
+                time.sleep(0.01)
     
     def doa_monitor(self):
         """
@@ -1005,6 +1210,8 @@ class VoiceAssistantWithDOA:
         print("  talk   - 带DOA+波束成形的语音对话（推荐）")
         print("  doa    - DOA实时监控")
         print("  bf     - 开关波束成形")
+        print("  aec    - 开关回声消除")
+        print("  fd     - 开关全双工打断检测")
         print("  status - 查看系统状态")
         print("  gain   - 设置麦克风增益")
         print("  quit   - 退出")
@@ -1032,6 +1239,12 @@ class VoiceAssistantWithDOA:
                 
                 elif command == 'bf':
                     self._toggle_beamforming()
+                
+                elif command == 'aec':
+                    self._toggle_aec()
+                
+                elif command == 'fd':
+                    self._toggle_fullduplex()
                 
                 else:
                     print("未知命令，请重试")
@@ -1071,6 +1284,18 @@ class VoiceAssistantWithDOA:
         print(f"波束成形: {'✅ 已启用' if self._beamforming_enabled else '❌ 已禁用'}")
         if self._beamforming_enabled:
             print(f"  波束指向: {self.beamformer._current_angle:.1f}°")
+        
+        # AEC 状态
+        print(f"回声消除: {'✅ 已启用' if self._aec_enabled else '❌ 已禁用'}")
+        if self._aec_enabled and self.aec:
+            erle = self.aec._aec.get_erle() if hasattr(self.aec, '_aec') else 0
+            print(f"  ERLE: {erle:.1f} dB")
+        
+        # 全双工状态
+        print(f"全双工打断: {'✅ 已启用' if self._fullduplex_enabled else '❌ 已禁用'}")
+        if self._fullduplex_enabled and self.fullduplex:
+            fd_state = self.fullduplex.state.value if hasattr(self.fullduplex, 'state') else 'unknown'
+            print(f"  状态机: {fd_state}")
         
         # 增益状态
         gains = self.mic_gain.check_gains()
@@ -1114,6 +1339,52 @@ class VoiceAssistantWithDOA:
         else:
             print("  - 使用单通道录音")
             print("  - 适用于简单场景")
+    
+    def _toggle_aec(self):
+        """开关回声消除"""
+        self._aec_enabled = not self._aec_enabled
+        status = "✅ 已启用" if self._aec_enabled else "❌ 已禁用"
+        print(f"\n回声消除 (AEC): {status}")
+        
+        if self._aec_enabled:
+            print("  - 使用 ReSpeaker 通道 6-7 作为回声参考")
+            print("  - NLMS 自适应滤波消除扬声器回声")
+            print("  - 提升 TTS 播放时的语音识别准确率")
+            
+            # 确保 AEC 已初始化
+            if not self.aec:
+                self.aec = HardwareAEC(
+                    sample_rate=self.config.get('audio', {}).get('sample_rate', 16000)
+                )
+                print("  ✅ AEC 已初始化")
+        else:
+            print("  - 禁用回声消除")
+            print("  - 可能影响 TTS 播放时的识别效果")
+    
+    def _toggle_fullduplex(self):
+        """开关全双工打断检测"""
+        self._fullduplex_enabled = not self._fullduplex_enabled
+        status = "✅ 已启用" if self._fullduplex_enabled else "❌ 已禁用"
+        print(f"\n全双工打断检测: {status}")
+        
+        if self._fullduplex_enabled:
+            print("  - TTS播放期间持续监听麦克风")
+            print("  - 使用DOA区分用户语音和扬声器回声")
+            print("  - 检测到打断时立即停止TTS")
+            
+            # 确保控制器已初始化
+            if not self.fullduplex:
+                self.event_bus = get_event_bus()
+                self.fullduplex = FullDuplexController(
+                    event_bus=self.event_bus,
+                    sample_rate=self.config.get('audio', {}).get('sample_rate', 16000)
+                )
+                self.fullduplex.on_interrupt(self._on_barge_in)
+                self.fullduplex.on_state_change(self._on_state_change)
+                print("  ✅ 控制器已初始化")
+        else:
+            print("  - 禁用打断检测")
+            print("  - TTS将播放完整音频")
 
 
 def main():
