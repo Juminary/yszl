@@ -1365,8 +1365,11 @@ def chat_endpoint():
                     broadcast_message('user_message', {'text': text, 'mode': target_mode, 'source': 'client'})
                     broadcast_message('assistant_message', {'text': response_text, 'mode': target_mode})
                     
-                    # 语音合成模式切换确认
-                    tts_result = modules['tts'].synthesize(text=response_text)
+                    # 语音合成模式切换确认（使用当前选择的音色克隆）
+                    tts_result = modules['tts'].synthesize(
+                        text=response_text,
+                        voice_clone_id=voice_clone_id
+                    )
                     
                     if tts_result.get('output_path'):
                         from flask import make_response
@@ -1588,9 +1591,9 @@ def chat_endpoint():
             logger.warning("Response text is empty, skipping TTS synthesis")
             return jsonify({
                 "error": "Empty response text",
-                "asr": asr_result,
-                "emotion": emotion_result,
-                "speaker": speaker_result,
+            "asr": asr_result,
+            "emotion": emotion_result,
+            "speaker": speaker_result,
                 "response": ""
             })
         
@@ -1716,6 +1719,14 @@ def chat_endpoint():
                     response.headers['X-RAG-Context'] = ''
                 response.headers['X-Mode-Switched'] = 'false'
                 response.headers['X-Streaming-Audio'] = 'False'  # 告知客户端这不是流式音频
+                
+                # 添加导诊信息到响应头
+                if triage_result:
+                    response.headers['X-Triage-Department'] = quote(triage_result.get('department', {}).get('name', ''), safe='')
+                    doctors = triage_result.get('doctors', [])
+                    if doctors:
+                        response.headers['X-Triage-Doctor'] = quote(doctors[0].get('name', ''), safe='')
+                
                 return response
             else:
                 return jsonify({
