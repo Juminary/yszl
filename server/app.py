@@ -1452,6 +1452,11 @@ def chat_endpoint():
         triage_result = None
         dialogue_result = None  # 初始化变量，确保在所有路径中都有定义
         
+        # 提取情感标签（在调用对话模块之前）
+        emotion_label = ''
+        if isinstance(emotion_result, dict):
+            emotion_label = (emotion_result.get('emotion') or '').lower()
+        
         if current_mode == 'patient' and 'triage' in modules:
             # 判断是否需要导诊的关键词
             triage_keywords = [
@@ -1550,9 +1555,6 @@ def chat_endpoint():
             response_text = dialogue_result.get('response', '')
         
         # 广播消息到网页（包含识别结果）- 在 TTS 之前执行
-        emotion_label = ''
-        if isinstance(emotion_result, dict):
-            emotion_label = (emotion_result.get('emotion') or '').lower()
         broadcast_message('user_message', {
             'text': text, 
             'mode': current_mode, 
