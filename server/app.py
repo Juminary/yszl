@@ -1475,14 +1475,18 @@ def chat_endpoint():
                         dialogue_result = modules['dialogue'].chat(
                             query=text,
                             session_id=f"{session_id}_{current_mode}",
-                            system_prompt=system_prompt
+                            system_prompt=system_prompt,
+                            emotion=emotion_label,
+                            emotional_mode=True  # 启用情感感知模式
                         )
                     else:
                         print(f"[DEBUG] 导诊未匹配到科室，使用普通对话")
                         dialogue_result = modules['dialogue'].chat(
                             query=text,
                             session_id=f"{session_id}_{current_mode}",
-                            system_prompt=system_prompt
+                            system_prompt=system_prompt,
+                            emotion=emotion_label,
+                            emotional_mode=True  # 启用情感感知模式
                         )
                         response_text = dialogue_result.get('response', '')
                 except Exception as e:
@@ -1491,7 +1495,9 @@ def chat_endpoint():
                     dialogue_result = modules['dialogue'].chat(
                         query=text,
                         session_id=f"{session_id}_{current_mode}",
-                        system_prompt=system_prompt
+                        system_prompt=system_prompt,
+                        emotion=emotion_label,
+                        emotional_mode=True  # 启用情感感知模式
                     )
                     response_text = dialogue_result.get('response', '')
             else:
@@ -1499,7 +1505,9 @@ def chat_endpoint():
                 dialogue_result = modules['dialogue'].chat(
                     query=text,
                     session_id=f"{session_id}_{current_mode}",
-                    system_prompt=system_prompt
+                    system_prompt=system_prompt,
+                    emotion=emotion_label,
+                    emotional_mode=True  # 启用情感感知模式
                 )
                 response_text = dialogue_result.get('response', '')
         else:
@@ -1507,7 +1515,9 @@ def chat_endpoint():
             dialogue_result = modules['dialogue'].chat(
                 query=text,
                 session_id=f"{session_id}_{current_mode}",
-                system_prompt=system_prompt
+                system_prompt=system_prompt,
+                emotion=emotion_label,
+                emotional_mode=True  # 启用情感感知模式
             )
             response_text = dialogue_result.get('response', '')
         
@@ -1564,6 +1574,16 @@ def chat_endpoint():
         # 准备响应头信息
         from urllib.parse import quote
         
+        # 提取情感感知模式的 TTS 指令（用于 CosyVoice instruct 模式）
+        tts_instruct = None
+        if dialogue_result and dialogue_result.get('emotional_mode'):
+            tts_instruct = dialogue_result.get('tts_instruct')
+            style = dialogue_result.get('style', '')
+            if tts_instruct:
+                logger.info(f"[Emotional TTS] 使用情感风格指令: {tts_instruct}")
+            if style:
+                logger.info(f"[Emotional TTS] LLM 生成的风格描述: {style}")
+        
         # 读取配置决定是否使用流式 TTS
         use_streaming_tts = config.get('tts', {}).get('streaming', True)
         
@@ -1585,7 +1605,11 @@ def chat_endpoint():
                                 voice_clone_id=voice_clone_id
                             )
                         else:
-                            result = tts_module.synthesize(text=response_text, voice_clone_id=voice_clone_id)
+                            result = tts_module.synthesize(
+                                text=response_text, 
+                                voice_clone_id=voice_clone_id,
+                                instruct=tts_instruct  # 情感感知 TTS 指令
+                            )
                         if result.get('output_path') and os.path.exists(result['output_path']):
                             with open(result['output_path'], 'rb') as f:
                                 while True:

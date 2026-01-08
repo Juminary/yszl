@@ -9,6 +9,13 @@ import logging
 from typing import Dict, List, Optional
 from collections import deque
 
+# 导入情感回复策略模块
+try:
+    from ..nlp.emotion_response_strategy import EmotionResponseStrategy
+    EMOTION_STRATEGY_AVAILABLE = True
+except ImportError:
+    EMOTION_STRATEGY_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,6 +62,11 @@ class DialogueModule:
         
         # 系统提示词（从配置文件读取或使用默认值）
         self.default_system_prompt = system_prompt
+        
+        # 情感回复策略模块
+        self.emotion_strategy = EmotionResponseStrategy() if EMOTION_STRATEGY_AVAILABLE else None
+        if self.emotion_strategy:
+            logger.info("Emotion Response Strategy initialized")
         
         # 对话历史管理
         self.conversations = {}
@@ -175,7 +187,7 @@ class DialogueModule:
     def chat(self, query: str, session_id: str = "default", 
              system_prompt: str = None, reset: bool = False,
              emotion: str = None, speaker_id: str = None,
-             use_rag: bool = True) -> Dict:
+             use_rag: bool = True, emotional_mode: bool = False) -> Dict:
         """
         进行对话
         
@@ -187,9 +199,10 @@ class DialogueModule:
             emotion: 用户情感（可选，用于情感感知回复）
             speaker_id: 说话人ID（可选）
             use_rag: 是否使用 RAG 检索（默认 True）
+            emotional_mode: 是否启用情感感知模式（输出 style + content）
         
         Returns:
-            对话结果
+            对话结果（emotional_mode=True 时包含 style 和 content 字段）
         """
         rag_context = None
         try:
@@ -212,13 +225,24 @@ class DialogueModule:
             
             conversation = self.conversations[session_id]
             
-            # 构建消息
-            messages = [{"role": "system", "content": conversation["system_prompt"]}]
+            # 构建消息 - 根据 emotional_mode 决定是否使用情感感知 prompt
+            base_system_prompt = conversation["system_prompt"]
             
-            # 添加情感上下文（如果有）
-            if emotion and emotion != "neutral":
-                emotion_context = f"[用户当前情绪: {emotion}] "
-                query = emotion_context + query
+            if emotional_mode and self.emotion_strategy and emotion:
+                # 情感感知模式：使用特殊的 prompt 引导 LLM 输出 [style]<endofprompt>[content] 格式
+                effective_system_prompt = self.emotion_strategy.build_emotional_system_prompt(
+                    emotion=emotion, 
+                    base_prompt=base_system_prompt
+                )
+                logger.info(f"[Emotional Mode] 启用情感感知模式，情绪: {emotion}")
+            else:
+                effective_system_prompt = base_system_prompt
+                # 传统模式：只在 query 前加情感标签
+                if emotion and emotion != "neutral":
+                    emotion_context = f"[用户当前情绪: {emotion}] "
+                    query = emotion_context + query
+            
+            messages = [{"role": "system", "content": effective_system_prompt}]
             
             # RAG 检索（如果启用）
             enhanced_query = query
@@ -271,20 +295,48 @@ class DialogueModule:
             
             response = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
             
+            # 情感感知模式：解析 LLM 输出为 style + content
+            style = ""
+            content = response
+            
+            if emotional_mode and self.emotion_strategy:
+                parsed = self.emotion_strategy.parse_emotional_response(response)
+                style = parsed.get("style", "")
+                content = parsed.get("content", response)
+                
+                # 如果解析失败（没有分隔符），使用默认风格
+                if not style and emotion:
+                    style = self.emotion_strategy.get_style_for_emotion(emotion)
+                    logger.info(f"[Emotional Mode] LLM 未输出风格，使用默认: {style}")
+                
+                logger.info(f"[Emotional Mode] 风格: {style}")
+                logger.info(f"[Emotional Mode] 内容: {content[:50]}...")
+            
             # 后处理：清理不适合语音合成的符号
-            response = self._clean_for_tts(response)
+            content = self._clean_for_tts(content)
             
-            # 更新历史
-            conversation["history"].append((query, response))
+            # 更新历史（只保存 content 部分）
+            conversation["history"].append((query, content))
             
-            return {
-                "response": response.strip(),
+            result = {
+                "response": content.strip(),
                 "query": query,
                 "session_id": session_id,
                 "history": list(conversation["history"]),
                 "rag_used": rag_context is not None,
                 "rag_context": rag_context
             }
+            
+            # emotional_mode 时添加额外字段
+            if emotional_mode:
+                result["style"] = style
+                result["content"] = content.strip()
+                result["emotional_mode"] = True
+                # 获取 CosyVoice instruct 文本
+                if self.emotion_strategy and emotion:
+                    result["tts_instruct"] = self.emotion_strategy.get_instruct_for_emotion(emotion)
+            
+            return result
             
         except Exception as e:
             logger.error(f"Chat failed: {e}")
