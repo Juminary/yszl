@@ -24,22 +24,42 @@ class EmotionResponseStrategy:
     # 用户情绪到 AI 语音风格的映射（中文版）
     # 注意：不是简单镜像用户情绪，而是选择能支持/安抚用户的风格
     EMOTION_TO_STYLE = {
+        # 基础情感（6种）
         "sad": "用温暖关怀的语气，语速稍慢，表达理解和同情",
         "angry": "用平静专业的语气，语速适中，耐心倾听不争辩",
         "fear": "用平稳安心的语气，语速稍慢，给予肯定和支持",
         "happy": "用轻松愉快的语气，语速稍快，保持积极氛围",
         "surprise": "用清晰明了的语气，语速适中，简洁解释情况",
         "neutral": "用专业友好的语气，语速适中，态度亲切",
+        
+        # 扩展情感（7种）
+        "depressed": "用深度共情的语气，语速缓慢，表达理解并鼓励寻求帮助",
+        "anxious": "用舒缓镇定的语气，语速平稳，逐步引导放松",
+        "pain": "用温和关心的语气，语速稍慢，明确建议就医",
+        "confused": "用清晰耐心的语气，语速适中，简洁易懂地解释",
+        "grateful": "用温馨友好的语气，语速适中，保持正面互动",
+        "frustrated": "用理解包容的语气，语速适中，认可情绪并积极解决",
+        "tired": "用关切体贴的语气，语速稍慢，建议休息和关爱自己",
     }
     
     # 用于 CosyVoice instruct 模式的英文风格描述（更适合模型理解）
     EMOTION_TO_INSTRUCT = {
+        # 基础情感（6种）
         "sad": "Speak with a warm, comforting tone, slower pace, and gentle emotion",
         "angry": "Speak with a calm, professional tone, medium pace, and patient manner",
         "fear": "Speak with a reassuring, steady tone, slower pace, and supportive emotion",
         "happy": "Speak with a cheerful, upbeat tone, slightly faster pace, and positive emotion",
         "surprise": "Speak with a clear, explanatory tone, medium pace, and composed manner",
         "neutral": "Speak with a friendly, professional tone, medium pace, and welcoming manner",
+        
+        # 扩展情感（7种）
+        "depressed": "Speak with a deeply empathetic tone, slow pace, gentle and encouraging",
+        "anxious": "Speak with a soothing, calming tone, steady pace, guiding relaxation",
+        "pain": "Speak with a gentle, caring tone, slower pace, expressing concern",
+        "confused": "Speak with a clear, patient tone, medium pace, easy to understand",
+        "grateful": "Speak with a warm, friendly tone, medium pace, positive and appreciative",
+        "frustrated": "Speak with an understanding tone, medium pace, acknowledging and solution-focused",
+        "tired": "Speak with a caring, gentle tone, slower pace, suggesting rest and self-care",
     }
     
     def __init__(self):
