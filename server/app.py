@@ -758,7 +758,8 @@ def dialogue_endpoint():
         mode_switch_commands = {
             'patient': ['切换到患者模式', '患者模式', '切换患者模式', '进入患者模式', '我是患者'],
             'doctor': ['切换到医生模式', '医生模式', '切换医生模式', '进入医生模式', '我是医生'],
-            'consultation': ['切换到会诊模式', '会诊模式', '开始会诊', '进入会诊模式', '启动会诊']
+            'consultation': ['切换到会诊模式', '会诊模式', '开始会诊', '进入会诊模式', '启动会诊'],
+            'caregiver': ['切换到陪护模式', '陪护模式', '切换陪护模式', '进入陪护模式', '我需要陪护']
         }
         
         # 检查是否是模式切换命令
@@ -767,7 +768,7 @@ def dialogue_endpoint():
             for cmd in commands:
                 if cmd.replace(' ', '') in query_clean or query_clean in cmd.replace(' ', ''):
                     # 检测到模式切换命令
-                    mode_names = {'patient': '患者', 'doctor': '医生', 'consultation': '会诊'}
+                    mode_names = {'patient': '患者', 'doctor': '医生', 'consultation': '会诊', 'caregiver': '陪护'}
                     response_text = f"好的，已切换到{mode_names[target_mode]}模式。"
                     
                     if target_mode == 'patient':
@@ -776,6 +777,8 @@ def dialogue_endpoint():
                         response_text += "我将为您提供专业的辅助诊断建议。"
                     elif target_mode == 'consultation':
                         response_text += "会诊模式已启动，我会记录对话并生成病历。"
+                    elif target_mode == 'caregiver':
+                        response_text += "我会帮助您照顾患者，有任何护理问题都可以问我。"
                     
                     return jsonify({
                         "text": response_text,
@@ -810,7 +813,16 @@ def dialogue_endpoint():
 
             'consultation': """你是会诊记录助手，正在记录医患对话。
 请简洁回应确认你正在记录，不需要提供医疗建议。
-回复简短即可，如"好的，已记录"或"继续"。"""
+回复简短即可，如"好的，已记录"或"继续"。""",
+
+            'caregiver': """你是一个专业的陪护指导助手，帮助家属和护工照顾患者。
+你的职责是，提供日常护理建议，解答照护困惑，在陪护者情绪低落时给予支持和鼓励。
+你应该用温暖、耐心的语气回应，就像一位经验丰富的护士在旁指导。
+你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求，
+只用纯中文回答，禁止英文和数字。
+只用中文逗号和句号，禁止其他标点。
+禁止使用列表和编号格式，必须写成连贯的一段话。
+当遇到紧急情况时，明确建议立即就医或拨打急救电话。"""
         }
         
         system_prompt = mode_prompts.get(mode, mode_prompts['patient'])
@@ -1313,7 +1325,8 @@ def chat_endpoint():
         mode_switch_commands = {
             'patient': ['切换到患者模式', '患者模式', '切换患者模式', '进入患者模式', '我是患者'],
             'doctor': ['切换到医生模式', '医生模式', '切换医生模式', '进入医生模式', '我是医生'],
-            'consultation': ['切换到会诊模式', '会诊模式', '开始会诊', '进入会诊模式', '启动会诊']
+            'consultation': ['切换到会诊模式', '会诊模式', '开始会诊', '进入会诊模式', '启动会诊'],
+            'caregiver': ['切换到陪护模式', '陪护模式', '切换陪护模式', '进入陪护模式', '我需要陪护']
         }
         
         for target_mode, commands in mode_switch_commands.items():
@@ -1324,7 +1337,7 @@ def chat_endpoint():
                     session_modes[session_id] = target_mode
                     logger.info(f"[Mode Switch] Session {session_id}: {old_mode} -> {target_mode}")
                     
-                    mode_names = {'patient': '患者', 'doctor': '医生', 'consultation': '会诊'}
+                    mode_names = {'patient': '患者', 'doctor': '医生', 'consultation': '会诊', 'caregiver': '陪护'}
                     response_text = f"好的，已切换到{mode_names[target_mode]}模式。"
                     
                     if target_mode == 'patient':
@@ -1340,6 +1353,8 @@ def chat_endpoint():
                             logger.info(f"[Consultation] Created session for {session_id}")
                         except Exception as e:
                             logger.warning(f"Failed to create consultation session: {e}")
+                    elif target_mode == 'caregiver':
+                        response_text += "我会帮助您照顾患者，有任何护理问题都可以问我。"
                     
                     # 广播消息到网页（包含模式切换信息）
                     broadcast_message('mode_switched', {
@@ -1404,7 +1419,16 @@ def chat_endpoint():
 
             'consultation': """你是会诊记录助手，正在记录医患对话。
 请简洁回应确认你正在记录，不需要提供医疗建议。
-回复简短即可，如"好的，已记录"或"继续"。"""
+回复简短即可，如"好的，已记录"或"继续"。""",
+
+            'caregiver': """你是一个专业的陪护指导助手，帮助家属和护工照顾患者。
+你的职责是，提供日常护理建议，解答照护困惑，在陪护者情绪低落时给予支持和鼓励。
+你应该用温暖、耐心的语气回应，就像一位经验丰富的护士在旁指导。
+你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求，
+只用纯中文回答，禁止英文和数字。
+只用中文逗号和句号，禁止其他标点。
+禁止使用列表和编号格式，必须写成连贯的一段话。
+当遇到紧急情况时，明确建议立即就医或拨打急救电话。"""
         }
         
         system_prompt = mode_prompts.get(current_mode, mode_prompts['patient'])

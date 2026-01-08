@@ -33,7 +33,7 @@ speaker:
 # 对话系统配置 (支持 GGUF 量化模型)
 dialogue:
   # 模型提供者: transformers (HuggingFace), gguf (llama.cpp)
-  provider: "gguf"
+  provider: "transformers"
   
   # GGUF 配置 (当 provider=gguf 时使用)
   gguf_repo: "Qwen/Qwen3-4B-GGUF"     # ModelScope 仓库
