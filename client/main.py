@@ -723,6 +723,19 @@ class VoiceAssistantClient:
                         print(f"😊 情感: {emotion} | 🎯 说话人: {speaker}")
                         print(f"🤖 助手: {response_text}")
                         
+                        # 检查并更新音色克隆ID（从响应头获取）
+                        voice_action = response.headers.get('X-Voice-Action', '')
+                        if voice_action == 'voice_switch_confirm':
+                            # 音色切换确认，更新本地音色ID
+                            new_voice_clone = unquote(response.headers.get('X-Voice-Clone', ''))
+                            if new_voice_clone:
+                                voice_clone_id = new_voice_clone
+                                logger.info(f"[Voice Switch] Updated voice_clone_id to: {voice_clone_id}")
+                            elif response.headers.get('X-Voice-Target'):
+                                # 兼容旧版本
+                                voice_clone_id = unquote(response.headers.get('X-Voice-Target', ''))
+                                logger.info(f"[Voice Switch] Updated voice_clone_id to: {voice_clone_id}")
+                        
                         # 检查服务器是否返回流式音频标记
                         is_streaming_audio = response.headers.get('X-Streaming-Audio', 'False') == 'True'
                         
