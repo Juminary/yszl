@@ -749,6 +749,8 @@ def dialogue_endpoint():
         session_id = data.get('session_id', 'default')
         reset = data.get('reset', False)
         mode = data.get('mode', 'patient')  # patient | doctor | consultation
+        emotion = data.get('emotion', 'neutral')  # 用户情绪
+        emotional_mode = data.get('emotional_mode', False)  # 是否启用情感感知模式
         
         # ========================================
         # 语音命令模式切换检测
@@ -886,7 +888,9 @@ def dialogue_endpoint():
             query=query,
             session_id=f"{session_id}_{mode}",  # 不同模式使用不同的会话历史
             reset=reset,
-            system_prompt=system_prompt
+            system_prompt=system_prompt,
+            emotion=emotion,
+            emotional_mode=emotional_mode
         )
         
         # 更新 RAG 状态等信息
