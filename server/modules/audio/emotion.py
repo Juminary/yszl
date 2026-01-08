@@ -135,13 +135,19 @@ class EmotionModule:
                 # 提取韵律特征
                 prosody = self._extract_prosody(audio_path, audio_array, sample_rate)
 
+                # 文本语义启发：明显的“开心/不开心/生气”词汇覆盖一档
+                text_heur = self._heuristic_emotion_from_text(text_result)
+                if text_heur:
+                    emotion = text_heur["emotion"]
+                    confidence = text_heur["confidence"]
+                else:
+                    confidence = 0.85 if emotion != "neutral" else 0.5
+
                 # 基于韵律的辅助判别：若模型输出为neutral且韵律特征明显偏低/高，做轻微偏移
                 heuristic = self._heuristic_emotion_from_prosody(prosody)
                 if emotion == "neutral" and heuristic:
                     emotion = heuristic["emotion"]
                     confidence = heuristic["confidence"]
-                else:
-                    confidence = 0.85 if emotion != "neutral" else 0.5
 
                 emotion_zh = self.EMOTIONS_ZH[self.EMOTIONS.index(emotion)]
                 return {
@@ -256,6 +262,30 @@ class EmotionModule:
             return {}
         except Exception as e:
             logger.debug(f"Heuristic emotion failed: {e}")
+            return {}
+
+    def _heuristic_emotion_from_text(self, text: str) -> Dict:
+        """基于中文情感关键词的简单覆盖，优先解决明显的“不开心/生气/难过”等情况。"""
+        try:
+            t = (text or "").lower()
+            # 悲伤/不开心
+            sad_keys = ["不开心", "难过", "伤心", "沮丧", "低落", "压抑", "烦", "心情不好", "不高兴"]
+            if any(k in t for k in sad_keys):
+                return {"emotion": "sad", "confidence": 0.7, "probabilities": {"sad": 0.7, "neutral": 0.3}}
+
+            # 开心
+            happy_keys = ["开心", "高兴", "愉快", "不错", "好开心", "很爽"]
+            if any(k in t for k in happy_keys):
+                return {"emotion": "happy", "confidence": 0.7, "probabilities": {"happy": 0.7, "neutral": 0.3}}
+
+            # 生气/烦躁
+            angry_keys = ["生气", "火大", "气死", "很烦", "恼火"]
+            if any(k in t for k in angry_keys):
+                return {"emotion": "angry", "confidence": 0.65, "probabilities": {"angry": 0.65, "neutral": 0.35}}
+
+            return {}
+        except Exception as e:
+            logger.debug(f"Text heuristic emotion failed: {e}")
             return {}
     
     def analyze_batch(self, audio_files: List[str]) -> List[Dict]:

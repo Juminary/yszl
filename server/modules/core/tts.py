@@ -980,15 +980,33 @@ class TTSModule:
         Returns:
             合成结果
         """
-        # 情感到指令/语速的映射，尽量让听感差异明显
-        # 更明显的情感差异；neutral 不下发 instruct，避免提示词被朗读
+        # 情感到指令/语速的映射，突出听感差异并加入口语化亲近感
+        # neutral 不下发 instruct，避免不必要的提示
         emotion_profiles = {
-            "happy": {"instruct": "明亮愉快、语调偏高、语速稍快", "speed": 1.10},
-            "sad": {"instruct": "温柔安慰、语调偏低、语速放慢", "speed": 0.90},
-            "angry": {"instruct": "克制冷静、语调中低、语速略快", "speed": 1.05},
-            "fear": {"instruct": "镇定稳重、音量柔和、语速偏慢", "speed": 0.94},
-            "anxious": {"instruct": "安抚耐心、语调柔和、语速中等偏慢", "speed": 0.96},
-            "surprise": {"instruct": "轻快明亮、音调上扬、语速稍快", "speed": 1.08},
+            "happy": {
+                "instruct": "语气明亮愉快，语调稍高，语速稍快，偶尔加好的呢、太好了、真不错等亲切口头语",
+                "speed": 1.10
+            },
+            "sad": {
+                "instruct": "语气柔软安慰，音量放轻，语速放慢，时不时说嗯嗯、别着急、我在听，传递陪伴",
+                "speed": 0.90
+            },
+            "angry": {
+                "instruct": "语气克制冷静，语调中低，语速略快但不强硬，用理解的口吻如我明白、先别急",
+                "speed": 1.05
+            },
+            "fear": {
+                "instruct": "语气镇定稳重，音量柔和，语速偏慢，用安抚词如别担心、我陪着你",
+                "speed": 0.94
+            },
+            "anxious": {
+                "instruct": "语气安抚耐心，语调柔和，语速中等偏慢，加入慢慢来、先深呼吸这类口头安慰",
+                "speed": 0.96
+            },
+            "surprise": {
+                "instruct": "语气轻快明亮，音调上扬，语速稍快，带一点惊喜感如哇、真不错",
+                "speed": 1.08
+            },
             "neutral": {"instruct": None, "speed": 1.0},
         }
 
