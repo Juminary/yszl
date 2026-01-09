@@ -79,3 +79,7 @@ server/data/Huatuo26M-Lite/*
 *.jsonl
 
 client/odas/odas_build/
+
+*.tar.gz
+
+qwen3-8b-sft-huatuo-quant-w4a16/
