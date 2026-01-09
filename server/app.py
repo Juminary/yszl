@@ -97,9 +97,9 @@ message_subscribers = []  # 存储所有SSE订阅者的队列
 
 # ========================================
 # 会话模式存储
-# 存储每个 session_id 的当前模式 (patient/doctor/consultation)
+# 存储每个 session_id 的当前模式 (patient/doctor/consultation/companionship)
 # ========================================
-session_modes = {}  # {session_id: 'patient' | 'doctor' | 'consultation'}
+session_modes = {}  # {session_id: 'patient' | 'doctor' | 'consultation' | 'companionship'}
 consultation_sessions = {}  # {session_id: ConsultationSession 实例}
 session_voice_preferences = {}  # {session_id: {"current": str | None, "awaiting_selection": bool}}
 
@@ -687,55 +687,6 @@ def speaker_list():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/speaker/delete', methods=['POST'])
-def speaker_delete():
-    """删除说话人接口（同时删除音色克隆）"""
-    try:
-        # 支持 JSON 和 form-data 两种方式
-        if request.is_json:
-            data = request.json
-            speaker_id = data.get('speaker_id')
-        else:
-            speaker_id = request.form.get('speaker_id')
-        
-        if not speaker_id:
-            return jsonify({"error": "speaker_id is required"}), 400
-        
-        # 检查说话人是否存在
-        if modules.get('speaker') is None:
-            return jsonify({"error": "Speaker module not available"}), 500
-        
-        speakers = modules['speaker'].list_speakers()
-        speaker_ids = [s.get('speaker_id') for s in speakers]
-        if speaker_id not in speaker_ids:
-            return jsonify({"error": f"Speaker {speaker_id} not found"}), 404
-        
-        # 删除说话人（同时删除音色克隆文件）
-        result = modules['speaker'].delete_speaker(speaker_id, delete_voice_clone=True)
-        
-        if result.get('status') == 'error':
-            return jsonify(result), 400
-        
-        # 从TTS模块中注销音色克隆
-        if modules.get('tts'):
-            try:
-                modules['tts'].unregister_voice_clone(speaker_id)
-                result['voice_clone_unregistered'] = True
-                logger.info(f"Unregistered voice clone for speaker: {speaker_id}")
-            except Exception as e:
-                result['voice_clone_unregistered'] = False
-                result['voice_clone_error'] = str(e)
-                logger.warning(f"Failed to unregister voice clone for speaker {speaker_id}: {e}")
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"Speaker delete error: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-
 @app.route('/dialogue', methods=['POST'])
 def dialogue_endpoint():
     """对话接口 - 支持语音命令切换模式"""
@@ -748,9 +699,7 @@ def dialogue_endpoint():
         query = data['query']
         session_id = data.get('session_id', 'default')
         reset = data.get('reset', False)
-        mode = data.get('mode', 'patient')  # patient | doctor | consultation
-        emotion = data.get('emotion', 'neutral')  # 用户情绪
-        emotional_mode = data.get('emotional_mode', False)  # 是否启用情感感知模式
+        mode = data.get('mode', 'patient')  # patient | doctor | consultation | companionship
         
         # ========================================
         # 语音命令模式切换检测
@@ -759,7 +708,7 @@ def dialogue_endpoint():
             'patient': ['切换到患者模式', '患者模式', '切换患者模式', '进入患者模式', '我是患者'],
             'doctor': ['切换到医生模式', '医生模式', '切换医生模式', '进入医生模式', '我是医生'],
             'consultation': ['切换到会诊模式', '会诊模式', '开始会诊', '进入会诊模式', '启动会诊'],
-            'caregiver': ['切换到陪护模式', '陪护模式', '切换陪护模式', '进入陪护模式', '我需要陪护']
+            'companionship': ['切换到陪护模式', '陪护模式', '日常陪护', '聊天陪护', '陪我聊天']
         }
         
         # 检查是否是模式切换命令
@@ -768,7 +717,7 @@ def dialogue_endpoint():
             for cmd in commands:
                 if cmd.replace(' ', '') in query_clean or query_clean in cmd.replace(' ', ''):
                     # 检测到模式切换命令
-                    mode_names = {'patient': '患者', 'doctor': '医生', 'consultation': '会诊', 'caregiver': '陪护'}
+                    mode_names = {'patient': '患者', 'doctor': '医生', 'consultation': '会诊', 'companionship': '陪护'}
                     response_text = f"好的，已切换到{mode_names[target_mode]}模式。"
                     
                     if target_mode == 'patient':
@@ -777,8 +726,8 @@ def dialogue_endpoint():
                         response_text += "我将为您提供专业的辅助诊断建议。"
                     elif target_mode == 'consultation':
                         response_text += "会诊模式已启动，我会记录对话并生成病历。"
-                    elif target_mode == 'caregiver':
-                        response_text += "我会帮助您照顾患者，有任何护理问题都可以问我。"
+                    elif target_mode == 'companionship':
+                        response_text += "日常陪护已开启，我会用轻松温暖的口吻陪您聊天和回答日常护理问题。"
                     
                     return jsonify({
                         "text": response_text,
@@ -802,31 +751,27 @@ def dialogue_endpoint():
 态度温和友好，像一个耐心的专业护士。
 在提供建议的同时，必须告知患者这不替代医生面诊，必要时及时就医。""",
 
-            'doctor': """你是医生的AI诊断辅助助手，帮助医生分析病情、提供鉴别诊断和治疗方案建议。
-你应该使用专业的医学术语，提供基于循证医学的建议。
-你的职责包括，分析患者症状提供鉴别诊断，建议必要的检查项目，提供治疗方案参考，提示潜在的风险和禁忌症。
-你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求，
-只用纯中文回答，禁止英文和数字。
-只用中文逗号和句号，禁止其他标点。
-禁止使用列表和编号格式，必须写成连贯的一段话。
-态度专业严谨，像一个经验丰富的主治医师在与同事讨论病例。""",
+                'doctor': """你是医生的AI诊断辅助助手，帮助医生分析病情、提供鉴别诊断和治疗方案建议。
+        你应该使用专业的医学术语，提供基于循证医学的建议。
+        你的职责包括，分析患者症状提供鉴别诊断，建议必要的检查项目，提供治疗方案参考，提示潜在的风险和禁忌症。
+        你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求，
+        只用纯中文回答，禁止英文和数字。
+        只用中文逗号和句号，禁止其他标点。
+        禁止使用列表和编号格式，必须写成连贯的一段话。
+        态度专业严谨，像一个经验丰富的主治医师在与同事讨论病例。""",
 
-            'consultation': """你是会诊记录助手，正在记录医患对话。
-请简洁回应确认你正在记录，不需要提供医疗建议。
-回复简短即可，如"好的，已记录"或"继续"。""",
+                'consultation': """你是会诊记录助手，正在记录医患对话。
+        请简洁回应确认你正在记录，不需要提供医疗建议。
+        回复简短即可，如"好的，已记录"或"继续"。""",
 
-            'caregiver': """你是一个温暖贴心的陪护助手，像朋友一样陪伴用户聊天，关注他们的情绪和需求。
-你的核心原则：
-一，先共情，准确理解用户的情绪状态，不要误判。如果用户说不开心，你要先表达理解和安慰，而不是直接讲开心的事。
-二，语气自然亲切，像朋友聊天一样，用口语化表达，比如"嗯嗯我听着呢""别担心慢慢说""辛苦啦""好的呢"，但不要重复使用。
-三，根据用户情绪调整语气：用户难过时温柔安慰，用户开心时轻松愉快，用户焦虑时耐心安抚。
-四，回答要简洁自然，像真人对话，避免官方套话。比如用户要听开心的事，不要说"当然可以，生活总是充满欢笑"，而是直接分享一个具体的小故事或话题。
-五，可以聊日常话题、分享小故事、给予鼓励，也可以提供简单的护理建议，但不要过于专业和严肃。
-你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求：
-只用纯中文回答，禁止英文和数字。
-只用中文逗号和句号，禁止其他标点。
-禁止使用列表和编号格式，必须写成连贯的一段话。
-当遇到紧急情况时，明确建议立即就医或拨打急救电话。"""
+                    'companionship': """你是日常陪护助理，场景在病房与患者轻松交流，关注情绪与简单养护问题。
+            你的回答将被直接用于语音合成朗读，须遵守：
+            一，先共情并正确复述用户情绪，绝不要误判为开心；
+            二，语气轻松温暖、体贴，避免严肃命令；
+            三，用纯中文，使用中文逗号和句号，禁止其他标点和列表编号；
+            四，回答简洁连贯，鼓励患者、给予安慰，可提供简单的术后/用药后护理建议（休息、饮食、补水、按时复诊等）；
+            五，遇到严重症状或风险，温和提醒联系医生或护士；
+            六，适度加入口语化的亲近表达，如“好的呢”“我听着呢”“别担心慢慢说”“辛苦啦”，保持自然但不重复。"""
         }
         
         system_prompt = mode_prompts.get(mode, mode_prompts['patient'])
@@ -904,9 +849,7 @@ def dialogue_endpoint():
             query=query,
             session_id=f"{session_id}_{mode}",  # 不同模式使用不同的会话历史
             reset=reset,
-            system_prompt=system_prompt,
-            emotion=emotion,
-            emotional_mode=emotional_mode
+            system_prompt=system_prompt
         )
         
         # 更新 RAG 状态等信息
@@ -1038,32 +981,19 @@ def chat_endpoint():
         
         requested_voice_clone = request.form.get('voice_clone_id')
         voice_clone_id = requested_voice_clone.strip() if requested_voice_clone else None
-        
-        # 修复逻辑：明确区分"使用默认音色"和"使用之前保存的音色"
-        # 如果用户明确指定 '0' 或空字符串，表示要使用默认音色，应该清除保存的音色
         if voice_clone_id in ("0", ""):
             voice_clone_id = None
-            voice_state['current'] = None  # 清除之前保存的音色，确保使用默认音色
-            logger.info("User explicitly requested default voice, clearing saved voice preference")
-        elif voice_clone_id and voice_clone_id in available_voice_clones:
-            # 用户指定了有效的音色克隆ID，保存并使用
+        
+        if voice_clone_id and voice_clone_id in available_voice_clones:
             voice_state['current'] = voice_clone_id
-            logger.info(f"Using requested voice clone: {voice_clone_id}")
         elif voice_clone_id and voice_clone_id not in available_voice_clones:
-            # 用户指定的音色克隆ID无效，回退到默认音色（不使用之前保存的音色）
-            logger.warning(f"Voice clone ID '{voice_clone_id}' not found, using default voice")
-            voice_clone_id = None
-            voice_state['current'] = None
-        else:
-            # 用户没有指定音色，使用之前保存的音色（如果有）
+            logger.warning(f"Voice clone ID '{voice_clone_id}' not found, using session preference")
             voice_clone_id = voice_state.get('current')
-            if voice_clone_id:
-                logger.info(f"Using saved voice preference: {voice_clone_id}")
-            else:
-                logger.info("Using default voice (no voice preference set)")
+        else:
+            voice_clone_id = voice_state.get('current')
         
         if voice_clone_id:
-            logger.info(f"Final voice clone selection: {voice_clone_id}")
+            logger.info(f"Using voice clone: {voice_clone_id}")
         
         # 保存临时文件
         temp_path = Path(tempfile.mktemp(suffix='.wav'))
@@ -1108,37 +1038,24 @@ def chat_endpoint():
             available_voice_clones = [str(name) for name in get_available_voice_clones() if name]
             voice_state['awaiting_selection'] = False
             selected_voice = None
-            normalized_text = text.strip().replace(' ', '').replace('，', '').replace(',', '')
+            normalized_text = text.strip()
             lower_text = normalized_text.lower()
-            
-            # 改进音色匹配逻辑：支持完整匹配、部分匹配和ID匹配
             for clone_name in available_voice_clones:
                 clone_key = str(clone_name)
-                clone_lower = clone_key.lower()
-                # 完整匹配
-                if clone_lower == lower_text or clone_key == normalized_text:
+                if clone_key.lower() in lower_text:
                     selected_voice = clone_key
                     break
-                # 部分匹配（音色名称包含在识别文本中，或识别文本包含音色名称）
-                if clone_lower in lower_text or lower_text in clone_lower:
-                    selected_voice = clone_key
-                    break
-                # ID匹配（如果音色名称是纯数字或包含数字）
-                if clone_key.isdigit() and clone_key in normalized_text:
-                    selected_voice = clone_key
-                    break
-            
             voice_response_voice = None
             if not available_voice_clones:
                 response_text = "当前没有可切换的音色，将继续使用默认音色。"
                 voice_state['current'] = None
             elif selected_voice:
                 voice_state['current'] = selected_voice
-                response_text = "已成功切换"
+                response_text = f"已切换至{selected_voice}音色。"
                 voice_response_voice = selected_voice
             else:
                 voice_state['current'] = None
-                response_text = "无目标音色，使用默认音色"
+                response_text = "目标音色不在列表，使用默认音色。"
             voice_clone_id = voice_state.get('current')
             broadcast_message('user_message', {
                 'text': text,
@@ -1155,21 +1072,35 @@ def chat_endpoint():
                 'voice_action': 'voice_switch_confirm',
                 'voice_target': voice_state.get('current')
             })
+            
+            def _stream_file(path: str):
+                with open(path, 'rb') as f:
+                    while True:
+                        chunk = f.read(4096)
+                        if not chunk:
+                            break
+                        yield chunk
+
             tts_result = modules['tts'].synthesize(
                 text=response_text,
                 voice_clone_id=voice_response_voice
             )
             if tts_result.get('output_path'):
-                from flask import make_response
+                from flask import Response
                 from urllib.parse import quote
-                response = make_response(send_file(
-                    tts_result['output_path'],
-                    mimetype='audio/wav',
-                    as_attachment=True,
-                    download_name='response.wav'
-                ))
+                response = Response(
+                    _stream_file(tts_result['output_path']),
+                    mimetype='audio/wav'
+                )
+                response.headers['Transfer-Encoding'] = 'chunked'
                 response.headers['X-ASR-Text'] = quote(text, safe='')
                 response.headers['X-Response-Text'] = quote(response_text, safe='')
+                response.headers['X-Emotion'] = quote(str(emotion_result.get('emotion', '')), safe='')
+                response.headers['X-Speaker'] = quote(str(speaker_result.get('speaker_id', '')), safe='')
+                response.headers['X-RAG-Used'] = 'False'
+                response.headers['X-RAG-Context'] = ''
+                response.headers['X-Mode-Switched'] = 'false'
+                response.headers['X-Streaming-Audio'] = 'True'
                 response.headers['X-Voice-Action'] = 'voice_switch_confirm'
                 if voice_state.get('current'):
                     response.headers['X-Voice-Clone'] = quote(voice_state['current'], safe='')
@@ -1180,55 +1111,8 @@ def chat_endpoint():
                 'voice_target': voice_state.get('current')
             })
 
-        # 音色切换指令检测 - 支持多种变体和部分匹配
-        def detect_voice_switch_intent(text: str) -> bool:
-            """
-            检测用户是否有切换音色的意图
-            支持多种变体：切换音色、换音色、音色、切换声音、换声音等
-            """
-            text_clean = text.strip().replace(' ', '').replace('，', '').replace(',', '').lower()
-            original_text = text.strip()
-            
-            # 完整匹配的触发词
-            full_triggers = [
-                '切换音色', '换音色', '音色切换', '切换声音', '换声音', '声音切换',
-                '改音色', '换一个音色', '换个音色', '换一下音色',
-                '切换语音', '换语音', '语音切换', '改语音',
-                '选择音色', '选音色', '换个声音', '换一个声音'
-            ]
-            
-            # 检查完整匹配
-            for trigger in full_triggers:
-                if trigger in text_clean:
-                    logger.info(f"[Voice Switch] 检测到完整匹配触发词: '{trigger}' in '{original_text}'")
-                    return True
-            
-            # 关键词组合匹配（更灵活，支持ASR识别不准确的情况）
-            # 包含"切换"或"换" + "音色"或"声音"或"语音"
-            switch_keywords = ['切换', '换', '改', '选', '选择']
-            voice_keywords = ['音色', '声音', '语音']
-            
-            has_switch = any(kw in text_clean for kw in switch_keywords)
-            has_voice = any(kw in text_clean for kw in voice_keywords)
-            
-            # 如果同时包含切换关键词和音色关键词，认为是切换音色意图
-            if has_switch and has_voice:
-                matched_switch = [kw for kw in switch_keywords if kw in text_clean]
-                matched_voice = [kw for kw in voice_keywords if kw in text_clean]
-                logger.info(f"[Voice Switch] 检测到关键词组合: 切换词={matched_switch}, 音色词={matched_voice} in '{original_text}'")
-                return True
-            
-            # 如果只包含"音色"且文本较短（可能是识别不完整），也认为是意图
-            if has_voice and len(text_clean) <= 10:
-                # 但排除一些明显不是切换意图的情况
-                exclude_patterns = ['什么音色', '哪个音色', '音色是什么', '音色怎么样', '音色如何', '音色好不好']
-                if not any(pattern in text_clean for pattern in exclude_patterns):
-                    logger.info(f"[Voice Switch] 检测到短文本音色关键词: '{original_text}' (长度={len(text_clean)})")
-                    return True
-            
-            return False
-        
-        if detect_voice_switch_intent(text):
+        voice_switch_triggers = ['切换音色']
+        if any(trigger in text_clean for trigger in voice_switch_triggers):
             available_voice_clones = [str(name) for name in get_available_voice_clones() if name]
             if available_voice_clones:
                 voice_state['awaiting_selection'] = True
@@ -1252,21 +1136,36 @@ def chat_endpoint():
                 'voice_action': 'voice_switch_list',
                 'voice_options': available_voice_clones
             })
+            
+            def _stream_file(path: str):
+                with open(path, 'rb') as f:
+                    while True:
+                        chunk = f.read(4096)
+                        if not chunk:
+                            break
+                        yield chunk
+
             tts_result = modules['tts'].synthesize(
                 text=response_text,
-                voice_clone_id=voice_state.get('current')
+                voice_clone_id=voice_state.get('current'),
+                target_sample_rate=16000
             )
             if tts_result.get('output_path'):
-                from flask import make_response
+                from flask import Response
                 from urllib.parse import quote
-                response = make_response(send_file(
-                    tts_result['output_path'],
-                    mimetype='audio/wav',
-                    as_attachment=True,
-                    download_name='response.wav'
-                ))
+                response = Response(
+                    _stream_file(tts_result['output_path']),
+                    mimetype='audio/wav'
+                )
+                response.headers['Transfer-Encoding'] = 'chunked'
                 response.headers['X-ASR-Text'] = quote(text, safe='')
                 response.headers['X-Response-Text'] = quote(response_text, safe='')
+                response.headers['X-Emotion'] = quote(str(emotion_result.get('emotion', '')), safe='')
+                response.headers['X-Speaker'] = quote(str(speaker_result.get('speaker_id', '')), safe='')
+                response.headers['X-RAG-Used'] = 'False'
+                response.headers['X-RAG-Context'] = ''
+                response.headers['X-Mode-Switched'] = 'false'
+                response.headers['X-Streaming-Audio'] = 'True'
                 response.headers['X-Voice-Action'] = 'voice_switch_list'
                 if available_voice_clones:
                     response.headers['X-Voice-Options'] = quote(','.join(available_voice_clones), safe='')
@@ -1330,7 +1229,7 @@ def chat_endpoint():
             'patient': ['切换到患者模式', '患者模式', '切换患者模式', '进入患者模式', '我是患者'],
             'doctor': ['切换到医生模式', '医生模式', '切换医生模式', '进入医生模式', '我是医生'],
             'consultation': ['切换到会诊模式', '会诊模式', '开始会诊', '进入会诊模式', '启动会诊'],
-            'caregiver': ['切换到陪护模式', '陪护模式', '切换陪护模式', '进入陪护模式', '我需要陪护']
+            'companionship': ['切换到陪护模式', '陪护模式', '日常陪护', '聊天陪护', '陪我聊天']
         }
         
         for target_mode, commands in mode_switch_commands.items():
@@ -1341,7 +1240,7 @@ def chat_endpoint():
                     session_modes[session_id] = target_mode
                     logger.info(f"[Mode Switch] Session {session_id}: {old_mode} -> {target_mode}")
                     
-                    mode_names = {'patient': '患者', 'doctor': '医生', 'consultation': '会诊', 'caregiver': '陪护'}
+                    mode_names = {'patient': '患者', 'doctor': '医生', 'consultation': '会诊', 'companionship': '陪护'}
                     response_text = f"好的，已切换到{mode_names[target_mode]}模式。"
                     
                     if target_mode == 'patient':
@@ -1350,6 +1249,8 @@ def chat_endpoint():
                         response_text += "我将为您提供专业的辅助诊断建议。"
                     elif target_mode == 'consultation':
                         response_text += "会诊模式已启动，我会记录对话并生成病历。"
+                    elif target_mode == 'companionship':
+                        response_text += "日常陪护已开启，我会用轻松温暖的口吻陪您聊天和回答日常护理问题。"
                         # 创建会诊会话
                         try:
                             from modules.aci.consultation_session import ConsultationSession
@@ -1357,8 +1258,6 @@ def chat_endpoint():
                             logger.info(f"[Consultation] Created session for {session_id}")
                         except Exception as e:
                             logger.warning(f"Failed to create consultation session: {e}")
-                    elif target_mode == 'caregiver':
-                        response_text += "我会帮助您照顾患者，有任何护理问题都可以问我。"
                     
                     # 广播消息到网页（包含模式切换信息）
                     broadcast_message('mode_switched', {
@@ -1369,11 +1268,8 @@ def chat_endpoint():
                     broadcast_message('user_message', {'text': text, 'mode': target_mode, 'source': 'client'})
                     broadcast_message('assistant_message', {'text': response_text, 'mode': target_mode})
                     
-                    # 语音合成模式切换确认（使用当前选择的音色克隆）
-                    tts_result = modules['tts'].synthesize(
-                        text=response_text,
-                        voice_clone_id=voice_clone_id
-                    )
+                    # 语音合成模式切换确认
+                    tts_result = modules['tts'].synthesize(text=response_text)
                     
                     if tts_result.get('output_path'):
                         from flask import make_response
@@ -1426,20 +1322,7 @@ def chat_endpoint():
 
             'consultation': """你是会诊记录助手，正在记录医患对话。
 请简洁回应确认你正在记录，不需要提供医疗建议。
-回复简短即可，如"好的，已记录"或"继续"。""",
-
-            'caregiver': """你是一个温暖贴心的陪护助手，像朋友一样陪伴用户聊天，关注他们的情绪和需求。
-你的核心原则：
-一，先共情，准确理解用户的情绪状态，不要误判。如果用户说不开心，你要先表达理解和安慰，而不是直接讲开心的事。
-二，语气自然亲切，像朋友聊天一样，用口语化表达，比如"嗯嗯我听着呢""别担心慢慢说""辛苦啦""好的呢"，但不要重复使用。
-三，根据用户情绪调整语气：用户难过时温柔安慰，用户开心时轻松愉快，用户焦虑时耐心安抚。
-四，回答要简洁自然，像真人对话，避免官方套话。比如用户要听开心的事，不要说"当然可以，生活总是充满欢笑"，而是直接分享一个具体的小故事或话题。
-五，可以聊日常话题、分享小故事、给予鼓励，也可以提供简单的护理建议，但不要过于专业和严肃。
-你的回答将被直接用于语音合成朗读，因此必须遵守以下格式要求：
-只用纯中文回答，禁止英文和数字。
-只用中文逗号和句号，禁止其他标点。
-禁止使用列表和编号格式，必须写成连贯的一段话。
-当遇到紧急情况时，明确建议立即就医或拨打急救电话。"""
+回复简短即可，如"好的，已记录"或"继续"。"""
         }
         
         system_prompt = mode_prompts.get(current_mode, mode_prompts['patient'])
@@ -1462,11 +1345,6 @@ def chat_endpoint():
         # ========================================
         triage_result = None
         dialogue_result = None  # 初始化变量，确保在所有路径中都有定义
-        
-        # 提取情感标签（在调用对话模块之前）
-        emotion_label = ''
-        if isinstance(emotion_result, dict):
-            emotion_label = (emotion_result.get('emotion') or '').lower()
         
         if current_mode == 'patient' and 'triage' in modules:
             # 判断是否需要导诊的关键词
@@ -1519,18 +1397,14 @@ def chat_endpoint():
                         dialogue_result = modules['dialogue'].chat(
                             query=text,
                             session_id=f"{session_id}_{current_mode}",
-                            system_prompt=system_prompt,
-                            emotion=emotion_label,
-                            emotional_mode=True  # 启用情感感知模式
+                            system_prompt=system_prompt
                         )
                     else:
                         print(f"[DEBUG] 导诊未匹配到科室，使用普通对话")
                         dialogue_result = modules['dialogue'].chat(
                             query=text,
                             session_id=f"{session_id}_{current_mode}",
-                            system_prompt=system_prompt,
-                            emotion=emotion_label,
-                            emotional_mode=True  # 启用情感感知模式
+                            system_prompt=system_prompt
                         )
                         response_text = dialogue_result.get('response', '')
                 except Exception as e:
@@ -1539,9 +1413,7 @@ def chat_endpoint():
                     dialogue_result = modules['dialogue'].chat(
                         query=text,
                         session_id=f"{session_id}_{current_mode}",
-                        system_prompt=system_prompt,
-                        emotion=emotion_label,
-                        emotional_mode=True  # 启用情感感知模式
+                        system_prompt=system_prompt
                     )
                     response_text = dialogue_result.get('response', '')
             else:
@@ -1549,9 +1421,7 @@ def chat_endpoint():
                 dialogue_result = modules['dialogue'].chat(
                     query=text,
                     session_id=f"{session_id}_{current_mode}",
-                    system_prompt=system_prompt,
-                    emotion=emotion_label,
-                    emotional_mode=True  # 启用情感感知模式
+                    system_prompt=system_prompt
                 )
                 response_text = dialogue_result.get('response', '')
         else:
@@ -1559,13 +1429,14 @@ def chat_endpoint():
             dialogue_result = modules['dialogue'].chat(
                 query=text,
                 session_id=f"{session_id}_{current_mode}",
-                system_prompt=system_prompt,
-                emotion=emotion_label,
-                emotional_mode=True  # 启用情感感知模式
+                system_prompt=system_prompt
             )
             response_text = dialogue_result.get('response', '')
         
         # 广播消息到网页（包含识别结果）- 在 TTS 之前执行
+        emotion_label = ''
+        if isinstance(emotion_result, dict):
+            emotion_label = (emotion_result.get('emotion') or '').lower()
         broadcast_message('user_message', {
             'text': text, 
             'mode': current_mode, 
@@ -1601,9 +1472,9 @@ def chat_endpoint():
             logger.warning("Response text is empty, skipping TTS synthesis")
             return jsonify({
                 "error": "Empty response text",
-            "asr": asr_result,
-            "emotion": emotion_result,
-            "speaker": speaker_result,
+                "asr": asr_result,
+                "emotion": emotion_result,
+                "speaker": speaker_result,
                 "response": ""
             })
         
@@ -1614,17 +1485,6 @@ def chat_endpoint():
         
         # 准备响应头信息
         from urllib.parse import quote
-        
-        # 情感感知模式：不使用 instruct 模式，改用 SFT 模式配合语速调整
-        if dialogue_result and dialogue_result.get('emotional_mode'):
-            style = dialogue_result.get('style', '')
-            emotion_from_dialogue = dialogue_result.get('emotion')
-            if emotion_from_dialogue:
-                emotion_label = emotion_from_dialogue  # 使用对话结果中的 emotion
-            if style:
-                logger.info(f"[Emotional TTS] LLM 生成的风格描述: {style}")
-            if emotion_label:
-                logger.info(f"[Emotional TTS] 使用情感感知模式，情感: {emotion_label}，通过语速调整体现")
         
         # 读取配置决定是否使用流式 TTS
         use_streaming_tts = config.get('tts', {}).get('streaming', True)
@@ -1647,11 +1507,7 @@ def chat_endpoint():
                                 voice_clone_id=voice_clone_id
                             )
                         else:
-                            result = tts_module.synthesize(
-                                text=response_text, 
-                                voice_clone_id=voice_clone_id,
-                                instruct=None  # 不使用 instruct 模式
-                            )
+                            result = tts_module.synthesize(text=response_text, voice_clone_id=voice_clone_id)
                         if result.get('output_path') and os.path.exists(result['output_path']):
                             with open(result['output_path'], 'rb') as f:
                                 while True:
@@ -1660,14 +1516,8 @@ def chat_endpoint():
                                         break
                                     yield chunk
                     else:
-                        # 无音色克隆：使用真正的流式合成（传递情感信息）
-                        for chunk in tts_module.synthesize_stream(
-                            response_text, 
-                            None,  # speaker
-                            1.0,   # speed (会被情感配置覆盖)
-                            emotion=emotion_label,  # 传递用户情感，用于语速调整
-                            instruct=None  # 不使用 instruct 模式
-                        ):
+                        # 无音色克隆：使用真正的流式合成
+                        for chunk in tts_module.synthesize_stream(response_text, None, 1.0):
                             yield chunk
                 except Exception as e:
                     logger.error(f"[Streaming TTS] Error: {e}")
@@ -1711,8 +1561,7 @@ def chat_endpoint():
             else:
                 tts_result = tts_module.synthesize(
                     text=response_text,
-                    voice_clone_id=voice_clone_id,
-                    instruct=None  # 不使用 instruct 模式
+                    voice_clone_id=voice_clone_id
                 )
             
             # 如果有音频文件，返回音频
@@ -1737,14 +1586,6 @@ def chat_endpoint():
                     response.headers['X-RAG-Context'] = ''
                 response.headers['X-Mode-Switched'] = 'false'
                 response.headers['X-Streaming-Audio'] = 'False'  # 告知客户端这不是流式音频
-                
-                # 添加导诊信息到响应头
-                if triage_result:
-                    response.headers['X-Triage-Department'] = quote(triage_result.get('department', {}).get('name', ''), safe='')
-                    doctors = triage_result.get('doctors', [])
-                    if doctors:
-                        response.headers['X-Triage-Doctor'] = quote(doctors[0].get('name', ''), safe='')
-                
                 return response
             else:
                 return jsonify({
