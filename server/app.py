@@ -329,6 +329,36 @@ def initialize_modules():
                 logger.warning(f"GGUF failed, falling back to transformers: {e}")
                 provider = 'transformers'  # 回退到 transformers
         
+        if provider == 'gptq':
+            # 使用 GPTQ 量化模型
+            try:
+                from modules.core.gptq_dialogue import GPTQDialogueModule
+                
+                gptq_model_path = dialogue_config.get('gptq_model_path', '')
+                
+                # 如果是相对路径，转换为绝对路径
+                if gptq_model_path and not os.path.isabs(gptq_model_path):
+                    gptq_model_path = os.path.join(os.path.dirname(__file__), '..', gptq_model_path)
+                
+                if not os.path.exists(gptq_model_path):
+                    raise FileNotFoundError(f"GPTQ model not found: {gptq_model_path}")
+                
+                modules['dialogue'] = GPTQDialogueModule(
+                    model_path=gptq_model_path,
+                    device=dialogue_config.get('device', 'cuda'),
+                    max_length=dialogue_config.get('max_length', 512),
+                    temperature=dialogue_config.get('temperature', 0.7),
+                    top_p=dialogue_config.get('top_p', 0.9),
+                    history_length=dialogue_config.get('history_length', 10),
+                    system_prompt=dialogue_config.get('system_prompt'),
+                    rag_module=rag_module
+                )
+                logger.info(f"Dialogue module initialized (GPTQ: {os.path.basename(gptq_model_path)})" + (" with RAG" if rag_module else ""))
+                
+            except Exception as e:
+                logger.warning(f"GPTQ failed, falling back to transformers: {e}")
+                provider = 'transformers'  # 回退到 transformers
+        
         if provider == 'transformers':
             # 使用 Transformers 模型
             try:

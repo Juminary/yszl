@@ -32,13 +32,16 @@ speaker:
 
 # 对话系统配置 (支持 GGUF 量化模型)
 dialogue:
-  # 模型提供者: transformers (HuggingFace), gguf (llama.cpp)
-  provider: "transformers"
+  # 模型提供者: transformers (HuggingFace), gguf (llama.cpp), gptq (GPTQ量化)
+  provider: "gptq"
   
   # GGUF 配置 (当 provider=gguf 时使用)
   gguf_repo: "Qwen/Qwen3-4B-GGUF"     # ModelScope 仓库
   gguf_file: "qwen3-4b-q4_k_m.gguf"   # GGUF 文件名 (小写)
   gguf_source: "modelscope"           # 下载源: huggingface, modelscope
+  
+  # GPTQ 配置 (当 provider=gptq 时使用)
+  gptq_model_path: "server/models/gptq/qwen3-8b-sft-huatuo-quant-w4a16"  # 本地GPTQ模型路径
   
   # Transformers 配置 (当 provider=transformers 时使用)
   model: "Qwen/Qwen2.5-0.5B-Instruct"

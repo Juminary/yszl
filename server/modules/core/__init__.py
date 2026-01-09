@@ -3,11 +3,13 @@ from .asr import ASRModule
 from .tts import TTSModule
 from .dialogue import DialogueModule, SimplDialogueModule
 from .rag import RAGModule
+from .gptq_dialogue import GPTQDialogueModule
 
 __all__ = [
     'ASRModule',
     'TTSModule', 
     'DialogueModule',
     'SimplDialogueModule',
-    'RAGModule'
+    'RAGModule',
+    'GPTQDialogueModule'
 ]
