@@ -12,14 +12,14 @@ client:
 asr:
   model: "iic/SenseVoiceSmall"
   provider: "funasr"
-  device: "cuda"  # 使用GPU加速
+  device: "cpu"  # 使用GPU加速
   language: "auto"  # 自动语言检测
 
 # 情感识别配置 (SenseVoice)
 emotion:
   model: "iic/SenseVoiceSmall"
   provider: "funasr"
-  device: "cuda"  # 使用GPU加速
+  device: "cpu"  # 使用GPU加速
   classes: ["neutral", "happy", "sad", "angry", "fear", "surprise"]
 
 # 声纹识别配置 (Cam++)
@@ -27,7 +27,7 @@ speaker:
   model: "iic/speech_campplus_sv_zh-cn_16k-common"
   provider: "modelscope"
   threshold: 0.5  # 降低阈值以提高识别率
-  device: "cuda"  # 使用GPU加速
+  device: "cpu"  # 使用GPU加速
   db_path: "data/speaker_db.pkl"
 
 # 对话系统配置 (支持 GGUF 量化模型)
