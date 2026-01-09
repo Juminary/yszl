@@ -33,7 +33,7 @@ speaker:
 # 对话系统配置 (支持 GGUF 量化模型)
 dialogue:
   # 模型提供者: transformers (HuggingFace), gguf (llama.cpp), gptq (GPTQ量化)
-  provider: "gptq"
+  provider: "transformers"
   
   # GGUF 配置 (当 provider=gguf 时使用)
   gguf_repo: "Qwen/Qwen3-4B-GGUF"     # ModelScope 仓库
@@ -83,7 +83,7 @@ tts:
   provider: "modelscope"
   device: "cuda"  # 使用GPU加速
   sample_rate: 16000
-  fast_mode: false  # CosyVoice模式（false=高质量，true=快速但低质量） pip install edge-tts
+  fast_mode: true  # CosyVoice模式（false=高质量，true=快速但低质量） pip install edge-tts
   streaming: true  # 启用流式TTS（边生成边播放）
 
 # 音频处理配置
