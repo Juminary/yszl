@@ -17,4 +17,6 @@ fi
 echo "启动服务器..."
 echo ""
 
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 python app.py
