@@ -206,9 +206,19 @@ def main():
         with open(os.path.join(PROJECT_DIR, 'config/config.yaml'), 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f)
         
-        print("\n⏳ 正在加载 Qwen2.5-0.5B 模型...")
-        # DialogueModule 需要传入 dialogue 配置的 model 字段
-        dialogue = DialogueModule(config['dialogue']['model'])
+        dialogue_cfg = config.get('dialogue', {})
+        device = dialogue_cfg.get('device', 'cuda')  # 默认使用 cuda
+        model_name = dialogue_cfg.get('model', 'Qwen/Qwen2.5-0.5B-Instruct')
+        
+        print(f"\n⏳ 正在加载 {model_name}，设备: {device}...")
+        # DialogueModule 需要传入 model 和 device
+        dialogue = DialogueModule(
+            model_name=model_name,
+            device=device,
+            max_length=dialogue_cfg.get('max_length', 512),
+            temperature=dialogue_cfg.get('temperature', 0.7)
+        )
+        print(f"✅ 模型已加载到: {dialogue.device}")
         test_llm_inference(metrics, dialogue, test_queries, n_runs=2)
         
     except Exception as e:
